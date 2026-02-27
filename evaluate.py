@@ -43,7 +43,7 @@ CLASSES_FILE = os.getenv("CLASSES_FILE", "classes.yaml")
 CONFIG = {
     "images_dir": os.getenv("DETECTION_DATASET_IMAGES_DIR", "../dataset1/images/default"),
     "annotations_file": os.getenv("DETECTION_DATASET_ANNOTATIONS_FILE", "../dataset1/annotations/instances_default.json"),
-    "model_path": os.path.join(os.getenv("OUTPUT_DIR", "./output"), "best_model.pt"),
+    "model_path": os.path.join(os.getenv("OUTPUT_DIR", "./output"), "best.pt"),
     "output_dir": os.getenv("EVALUATION_DIR", "./evaluation"),
     "classes_file": CLASSES_FILE,
     "classes": load_classes(CLASSES_FILE),
