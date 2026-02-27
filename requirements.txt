@@ -1,0 +1,26 @@
+# Requirements pour YOLO Détection
+# Installation: pip install -r requirements.txt
+
+# Ultralytics YOLO
+ultralytics>=8.0.0
+
+# PyTorch
+torch>=2.0.0
+torchvision>=0.15.0
+
+# COCO tools
+pycocotools>=2.0.6
+
+# Images
+Pillow>=9.0.0
+numpy>=1.21.0
+
+# Visualisation
+matplotlib>=3.5.0
+
+# Configuration
+PyYAML>=6.0
+python-dotenv>=1.0.0
+
+# Utilitaires
+tqdm>=4.64.0
