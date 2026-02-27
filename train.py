@@ -67,7 +67,7 @@ CONFIG = {
     "classes": None,
     
     # Modèle YOLO
-    "model_version": os.getenv("YOLO_VERSION", "yolo25"),
+    "model_version": os.getenv("YOLO_VERSION", "yolo26"),
     "model_size": os.getenv("YOLO_SIZE", "n"),
     
     # Hyperparamètres
