@@ -134,7 +134,7 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser()
     parser.add_argument("--images", default="./data/images")
-    parser.add_argument("--annotations", default="./data/annotations/instances_default.json")
+    parser.add_argument("--annotations", default= os.getenv("DETECTION_DATASET_ANNOTATIONS_FILE", "../dataset1/annotations/instances_default.json"))
     parser.add_argument("--visualize", action="store_true")
     parser.add_argument("--num-samples", type=int, default=3)
     
