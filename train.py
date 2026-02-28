@@ -323,6 +323,11 @@ def train_yolo():
     
     start_time = time.time()
     
+    # Nettoyer le dossier train précédent pour éviter les conflits
+    train_dir = os.path.join(CONFIG["output_dir"], "train")
+    if os.path.exists(train_dir):
+        shutil.rmtree(train_dir)
+    
     results = model.train(
         data=yaml_path,
         epochs=CONFIG["num_epochs"],
@@ -349,8 +354,26 @@ def train_yolo():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     
+    # Trouver le dossier d'entraînement réel (YOLO peut créer train, train2, train3...)
+    train_dir = None
+    weights_dir = None
+    
+    # Chercher le dossier le plus récent qui contient weights/best.pt
+    for folder in sorted(os.listdir(CONFIG["output_dir"]), reverse=True):
+        potential_dir = os.path.join(CONFIG["output_dir"], folder)
+        potential_weights = os.path.join(potential_dir, "weights", "best.pt")
+        if os.path.isdir(potential_dir) and os.path.exists(potential_weights):
+            train_dir = potential_dir
+            weights_dir = os.path.join(potential_dir, "weights")
+            break
+    
+    if train_dir is None:
+        train_dir = os.path.join(CONFIG["output_dir"], "train")
+        weights_dir = os.path.join(train_dir, "weights")
+    
+    print(f"\n📁 Dossier d'entraînement: {train_dir}")
+    
     # Récupérer métriques
-    train_dir = os.path.join(CONFIG["output_dir"], "train")
     history = {'mAP50': [], 'mAP50_95': [], 'precision': [], 'recall': [],
                'train_box_loss': [], 'train_cls_loss': [], 'train_dfl_loss': [],
                'val_box_loss': [], 'val_cls_loss': [], 'val_dfl_loss': []}
@@ -381,11 +404,30 @@ def train_yolo():
     with open(os.path.join(CONFIG["output_dir"], "history.json"), 'w') as f:
         json.dump(history, f, indent=2, default=str)
     
-    # Copier modèles
+    # Copier modèles vers la racine de output/
+    print("\n📦 Copie des modèles...")
+    models_copied = []
+    
     for src, dst in [("best.pt", "best_model.pt"), ("last.pt", "final_model.pt")]:
-        src_path = os.path.join(train_dir, "weights", src)
+        src_path = os.path.join(weights_dir, src)
+        dst_path = os.path.join(CONFIG["output_dir"], dst)
         if os.path.exists(src_path):
-            shutil.copy2(src_path, os.path.join(CONFIG["output_dir"], dst))
+            shutil.copy2(src_path, dst_path)
+            models_copied.append(dst)
+            print(f"   ✅ {dst} ({os.path.getsize(dst_path) / 1024 / 1024:.1f} MB)")
+        else:
+            print(f"   ⚠️ {src} non trouvé dans {weights_dir}")
+    
+    if not models_copied:
+        print("   ❌ Aucun modèle trouvé!")
+        # Lister le contenu pour debug
+        print(f"\n   Contenu de {CONFIG['output_dir']}:")
+        for item in os.listdir(CONFIG["output_dir"]):
+            item_path = os.path.join(CONFIG["output_dir"], item)
+            if os.path.isdir(item_path):
+                print(f"      📁 {item}/")
+                for sub in os.listdir(item_path)[:5]:
+                    print(f"         - {sub}")
     
     # Rapport
     best = {k: max(history[k]) if history[k] else 0 for k in ['mAP50', 'mAP50_95', 'precision', 'recall']}
