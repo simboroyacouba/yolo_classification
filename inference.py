@@ -144,7 +144,7 @@ def generate_summary(reports, output_dir, total_time):
 
 def main():
     parser = argparse.ArgumentParser(description="Inférence YOLO")
-    parser.add_argument("--model", default=os.path.join(os.getenv("OUTPUT_DIR", "./output"), "best.pt"))
+    parser.add_argument("--model", default=os.path.join(os.getenv("OUTPUT_DIR", "./output"), "best_model.pt"))
     parser.add_argument("--input", default=os.getenv("DETECTION_TEST_IMAGES_DIR", "../test"))
     parser.add_argument("--output", default=os.getenv("PREDICTIONS_DIR", "./predictions"))
     parser.add_argument("--threshold", type=float, default=0.5)
