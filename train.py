@@ -323,11 +323,7 @@ def train_yolo():
     
     start_time = time.time()
     
-    # Nettoyer le dossier train précédent pour éviter les conflits
-    train_dir = os.path.join(CONFIG["output_dir"], "train")
-    if os.path.exists(train_dir):
-        shutil.rmtree(train_dir)
-    
+    # Laisser YOLO gérer ses propres chemins (pas de project/name)
     results = model.train(
         data=yaml_path,
         epochs=CONFIG["num_epochs"],
@@ -336,9 +332,6 @@ def train_yolo():
         lr0=CONFIG["learning_rate"],
         momentum=CONFIG["momentum"],
         weight_decay=CONFIG["weight_decay"],
-        project=CONFIG["output_dir"],
-        name="train",
-        exist_ok=True,
         seed=42,
         verbose=True,
         save=True,
@@ -354,24 +347,12 @@ def train_yolo():
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
     
-    # Trouver le dossier d'entraînement réel (YOLO peut créer train, train2, train3...)
-    train_dir = None
-    weights_dir = None
+    # Récupérer le chemin directement depuis YOLO
+    train_dir = str(results.save_dir)
+    weights_dir = os.path.join(train_dir, "weights")
     
-    # Chercher le dossier le plus récent qui contient weights/best.pt
-    for folder in sorted(os.listdir(CONFIG["output_dir"]), reverse=True):
-        potential_dir = os.path.join(CONFIG["output_dir"], folder)
-        potential_weights = os.path.join(potential_dir, "weights", "best.pt")
-        if os.path.isdir(potential_dir) and os.path.exists(potential_weights):
-            train_dir = potential_dir
-            weights_dir = os.path.join(potential_dir, "weights")
-            break
-    
-    if train_dir is None:
-        train_dir = os.path.join(CONFIG["output_dir"], "train")
-        weights_dir = os.path.join(train_dir, "weights")
-    
-    print(f"\n📁 Dossier d'entraînement: {train_dir}")
+    print(f"\n📁 Dossier d'entraînement YOLO: {train_dir}")
+    print(f"📁 Dossier des poids: {weights_dir}")
     
     # Récupérer métriques
     history = {'mAP50': [], 'mAP50_95': [], 'precision': [], 'recall': [],
@@ -401,16 +382,16 @@ def train_yolo():
     history['config'] = CONFIG
     history['dataset_stats'] = dataset_stats
     
-    with open(os.path.join(CONFIG["output_dir"], "history.json"), 'w') as f:
+    with open(os.path.join(train_dir, "history.json"), 'w') as f:
         json.dump(history, f, indent=2, default=str)
     
-    # Copier modèles vers la racine de output/
+    # Copier modèles vers la racine du dossier YOLO
     print("\n📦 Copie des modèles...")
     models_copied = []
     
     for src, dst in [("best.pt", "best_model.pt"), ("last.pt", "final_model.pt")]:
         src_path = os.path.join(weights_dir, src)
-        dst_path = os.path.join(CONFIG["output_dir"], dst)
+        dst_path = os.path.join(train_dir, dst)
         if os.path.exists(src_path):
             shutil.copy2(src_path, dst_path)
             models_copied.append(dst)
@@ -420,10 +401,9 @@ def train_yolo():
     
     if not models_copied:
         print("   ❌ Aucun modèle trouvé!")
-        # Lister le contenu pour debug
-        print(f"\n   Contenu de {CONFIG['output_dir']}:")
-        for item in os.listdir(CONFIG["output_dir"]):
-            item_path = os.path.join(CONFIG["output_dir"], item)
+        print(f"\n   Contenu de {train_dir}:")
+        for item in os.listdir(train_dir):
+            item_path = os.path.join(train_dir, item)
             if os.path.isdir(item_path):
                 print(f"      📁 {item}/")
                 for sub in os.listdir(item_path)[:5]:
@@ -440,10 +420,11 @@ def train_yolo():
     print(f"   Precision:  {best['precision']:.4f}")
     print(f"   Recall:     {best['recall']:.4f}")
     print(f"   ⏱️  Temps:    {format_time(total_time)}")
+    print(f"   📁 Modèles:  {train_dir}")
     print("=" * 70)
     
     # Rapport texte
-    with open(os.path.join(CONFIG["output_dir"], "training_report.txt"), 'w', encoding='utf-8') as f:
+    with open(os.path.join(train_dir, "training_report.txt"), 'w', encoding='utf-8') as f:
         f.write(f"YOLO ({CONFIG['model_version']}{CONFIG['model_size']}) - Rapport\n")
         f.write("=" * 50 + "\n\n")
         f.write(f"Dataset: {CONFIG['images_dir']}\n")
@@ -452,6 +433,7 @@ def train_yolo():
         f.write(f"mAP@50: {best['mAP50']:.4f}\nmAP@50:95: {best['mAP50_95']:.4f}\n")
         f.write(f"Precision: {best['precision']:.4f}\nRecall: {best['recall']:.4f}\n")
         f.write(f"Temps: {format_time(total_time)}\n")
+        f.write(f"Chemin: {train_dir}\n")
     
     # Graphiques
     if history['mAP50']:
@@ -478,8 +460,13 @@ def train_yolo():
         axes[1,1].set_title('Loss Components'); axes[1,1].legend(); axes[1,1].grid(True, alpha=0.3)
         
         plt.tight_layout()
-        plt.savefig(os.path.join(CONFIG["output_dir"], 'training_curves.png'), dpi=150)
+        plt.savefig(os.path.join(train_dir, 'training_curves.png'), dpi=150)
         plt.close()
+    
+    # Afficher le chemin final des modèles
+    print(f"\n📁 Modèles sauvegardés dans: {train_dir}")
+    print(f"   - {os.path.join(train_dir, 'best_model.pt')}")
+    print(f"   - {os.path.join(train_dir, 'final_model.pt')}")
     
     return model, history
 
