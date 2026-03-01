@@ -161,21 +161,32 @@ def stratified_split(coco, train_split=0.70, val_split=0.20, test_split=0.10, se
         np.random.shuffle(img_ids)
         n = len(img_ids)
         
-        train_end = int(n * train_split)
-        val_end = int(n * (train_split + val_split))
+        if n == 0:
+            continue
         
-        # Garantir au moins 1 image dans chaque split si possible
-        if n >= 3:
-            if train_end == 0:
-                train_end = 1
-            if val_end <= train_end:
-                val_end = train_end + 1
-            if val_end >= n:
-                val_end = n - 1
+        # Calculer les indices de split avec arrondi correct
+        # On utilise round() au lieu de int() pour un meilleur équilibre
+        n_train = max(1, round(n * train_split))
+        n_val = max(1, round(n * val_split)) if n > 1 else 0
+        n_test = max(1, n - n_train - n_val) if n > 2 else 0
         
-        train_ids.extend(img_ids[:train_end])
-        val_ids.extend(img_ids[train_end:val_end])
-        test_ids.extend(img_ids[val_end:])
+        # Ajuster si le total dépasse n
+        total = n_train + n_val + n_test
+        if total > n:
+            # Réduire proportionnellement
+            if n_test > 0 and total > n:
+                n_test = max(0, n - n_train - n_val)
+            if n_val > 0 and n_train + n_val > n:
+                n_val = max(0, n - n_train)
+        
+        # S'assurer qu'on utilise toutes les images
+        if n_train + n_val + n_test < n:
+            n_train = n - n_val - n_test
+        
+        # Assigner les images
+        train_ids.extend(img_ids[:n_train])
+        val_ids.extend(img_ids[n_train:n_train + n_val])
+        test_ids.extend(img_ids[n_train + n_val:])
     
     # Mélanger les résultats finaux
     np.random.shuffle(train_ids)
@@ -201,6 +212,13 @@ def stratified_split(coco, train_split=0.70, val_split=0.20, test_split=0.10, se
     for img_id in test_ids:
         for ann in coco.loadAnns(coco.getAnnIds(imgIds=img_id)):
             stats['test'][ann['category_id']] = stats['test'].get(ann['category_id'], 0) + 1
+    
+    # Afficher le résumé du split par images
+    total_images = len(train_ids) + len(val_ids) + len(test_ids)
+    print(f"\n   📊 Split des IMAGES:")
+    print(f"      Train: {len(train_ids)} ({len(train_ids)/total_images*100:.1f}%)")
+    print(f"      Val:   {len(val_ids)} ({len(val_ids)/total_images*100:.1f}%)")
+    print(f"      Test:  {len(test_ids)} ({len(test_ids)/total_images*100:.1f}%)")
     
     return train_ids, val_ids, test_ids, stats
 
@@ -230,7 +248,16 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes, trai
     
     print("📂 Préparation du dataset YOLO...")
     
-    dataset_dir = os.path.join(output_dir, "dataset")
+    # IMPORTANT: Utiliser un chemin fixe pour éviter les imbrications
+    # Le dataset sera toujours dans ./output/dataset/ peu importe où YOLO sauvegarde
+    base_output = os.path.abspath("./output")
+    dataset_dir = os.path.join(base_output, "dataset")
+    
+    # Nettoyer si existe déjà
+    if os.path.exists(dataset_dir):
+        import shutil as sh
+        sh.rmtree(dataset_dir)
+    
     dirs = {
         'train_img': os.path.join(dataset_dir, "images", "train"),
         'val_img': os.path.join(dataset_dir, "images", "val"),
