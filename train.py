@@ -107,9 +107,9 @@ def coco_to_yolo_bbox(bbox, img_width, img_height):
     return [x_center, y_center, width, height]
 
 
-def stratified_split(coco, train_split=0.70, val_split=0.20, test_split=0.10, seed=42):
+def stratified_split(coco, train_split, val_split, test_split, seed=42):
     """
-    Split stratifié 70/20/10 en utilisant une approche globale.
+    Split stratifié en utilisant une approche globale.
     
     Retourne: train_ids, val_ids, test_ids, stats
     """
@@ -190,8 +190,8 @@ def print_split_stats(coco, stats):
     print(f"   {'-'*65}")
 
 
-def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes, train_split=0.70, val_split=0.20, test_split=0.10):
-    """Convertir le dataset COCO en format YOLO avec split stratifié 70/20/10"""
+def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes, train_split, val_split, test_split):
+    """Convertir le dataset COCO en format YOLO avec split stratifié"""
     
     print("📂 Préparation du dataset YOLO...")
     
