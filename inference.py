@@ -29,6 +29,33 @@ except ImportError:
 # CONFIG
 # =============================================================================
 
+def find_best_model():
+    """Trouver automatiquement le meilleur modèle dans runs/detect/"""
+    
+    # Chercher dans runs/detect/
+    if os.path.exists("runs/detect"):
+        # Lister tous les dossiers train triés (train, train2, train3...)
+        train_folders = sorted([f for f in os.listdir("runs/detect") if f.startswith("train")], 
+                               key=lambda x: int(x.replace("train", "") or "0"))
+        
+        # Prendre le plus récent (dernier de la liste)
+        for folder in reversed(train_folders):
+            best_pt = f"runs/detect/{folder}/weights/best.pt"
+            if os.path.exists(best_pt):
+                print(f"📁 Modèle trouvé: {best_pt}")
+                return best_pt
+    
+    # Chercher dans output/
+    if os.path.exists("output"):
+        for name in ["best_model.pt", "best.pt"]:
+            path = f"output/{name}"
+            if os.path.exists(path):
+                return path
+    
+    # Valeur par défaut
+    return os.path.join(os.getenv("OUTPUT_DIR", "./output"), "best_model.pt")
+
+
 def load_classes(yaml_path="classes.yaml"):
     if not os.path.exists(yaml_path):
         return ["__background__", "toiture_tole_ondulee", "toiture_tole_bac", "toiture_tuile", "toiture_dalle"]
@@ -144,12 +171,27 @@ def generate_summary(reports, output_dir, total_time):
 
 def main():
     parser = argparse.ArgumentParser(description="Inférence YOLO")
-    parser.add_argument("--model", default=os.path.join(os.getenv("OUTPUT_DIR", "./output"), "best_model.pt"))
-    parser.add_argument("--input", default=os.getenv("DETECTION_INFERENCE_IMAGES_DIR", "../test"))
+    parser.add_argument("--model", default=None, help="Chemin du modèle (auto-détecté si non spécifié)")
+    parser.add_argument("--input", default=os.getenv("DETECTION_TEST_IMAGES_DIR", "../test"))
     parser.add_argument("--output", default=os.getenv("PREDICTIONS_DIR", "./predictions"))
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--no-display", action="store_true")
     args = parser.parse_args()
+    
+    # Trouver le modèle automatiquement si non spécifié
+    if args.model is None:
+        args.model = find_best_model()
+    
+    if not os.path.exists(args.model):
+        print(f"❌ Modèle non trouvé: {args.model}")
+        print("\n📁 Dossiers disponibles dans runs/detect/:")
+        if os.path.exists("runs/detect"):
+            for folder in sorted(os.listdir("runs/detect")):
+                weights_path = f"runs/detect/{folder}/weights"
+                if os.path.exists(weights_path):
+                    files = os.listdir(weights_path)
+                    print(f"   {folder}: {files}")
+        return
     
     print(f"🧠 Modèle: {args.model}")
     model = YOLO(args.model)
