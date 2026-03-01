@@ -77,7 +77,9 @@ CONFIG = {
     "momentum": 0.9,
     "weight_decay": 0.0005,
     "image_size": int(os.getenv("IMAGE_SIZE", "640")),
-    "train_split": float(os.getenv("TRAIN_SPLIT", "0.85")),
+    "train_split": float(os.getenv("TRAIN_SPLIT", "0.70")),
+    "val_split": float(os.getenv("VAL_SPLIT", "0.20")),
+    "test_split": float(os.getenv("TEST_SPLIT", "0.10")),
     "save_every": 5,
 }
 
@@ -105,18 +107,18 @@ def coco_to_yolo_bbox(bbox, img_width, img_height):
     return [x_center, y_center, width, height]
 
 
-def stratified_split(coco, train_split=0.85, seed=42):
+def stratified_split(coco, train_split=0.70, val_split=0.20, test_split=0.10, seed=42):
     """
     Split stratifié pour garantir que chaque classe est représentée
-    proportionnellement dans train et val.
+    proportionnellement dans train, val et test.
     
     Algorithme:
     1. Pour chaque image, déterminer la classe "dominante" (la plus fréquente)
     2. Grouper les images par classe dominante
-    3. Pour chaque groupe, prendre 85% pour train et 15% pour val
+    3. Pour chaque groupe, prendre 70% train, 20% val, 10% test
     4. Fusionner les résultats
     
-    Retourne: train_ids, val_ids, stats
+    Retourne: train_ids, val_ids, test_ids, stats
     """
     np.random.seed(seed)
     
@@ -150,31 +152,43 @@ def stratified_split(coco, train_split=0.85, seed=42):
             images_by_class[class_id] = []
         images_by_class[class_id].append(img_id)
     
-    # Split stratifié
+    # Split stratifié 70/20/10
     train_ids = []
     val_ids = []
+    test_ids = []
     
     for class_id, img_ids in images_by_class.items():
         np.random.shuffle(img_ids)
-        split_idx = int(len(img_ids) * train_split)
+        n = len(img_ids)
         
-        # Garantir au moins 1 image dans val si possible
-        if split_idx == len(img_ids) and len(img_ids) > 1:
-            split_idx = len(img_ids) - 1
+        train_end = int(n * train_split)
+        val_end = int(n * (train_split + val_split))
         
-        train_ids.extend(img_ids[:split_idx])
-        val_ids.extend(img_ids[split_idx:])
+        # Garantir au moins 1 image dans chaque split si possible
+        if n >= 3:
+            if train_end == 0:
+                train_end = 1
+            if val_end <= train_end:
+                val_end = train_end + 1
+            if val_end >= n:
+                val_end = n - 1
+        
+        train_ids.extend(img_ids[:train_end])
+        val_ids.extend(img_ids[train_end:val_end])
+        test_ids.extend(img_ids[val_end:])
     
     # Mélanger les résultats finaux
     np.random.shuffle(train_ids)
     np.random.shuffle(val_ids)
+    np.random.shuffle(test_ids)
     
     # Calculer les statistiques de distribution
-    stats = {'train': {}, 'val': {}}
+    stats = {'train': {}, 'val': {}, 'test': {}}
     
     for cat_id in coco.getCatIds():
         stats['train'][cat_id] = 0
         stats['val'][cat_id] = 0
+        stats['test'][cat_id] = 0
     
     for img_id in train_ids:
         for ann in coco.loadAnns(coco.getAnnIds(imgIds=img_id)):
@@ -184,31 +198,35 @@ def stratified_split(coco, train_split=0.85, seed=42):
         for ann in coco.loadAnns(coco.getAnnIds(imgIds=img_id)):
             stats['val'][ann['category_id']] = stats['val'].get(ann['category_id'], 0) + 1
     
-    return train_ids, val_ids, stats
+    for img_id in test_ids:
+        for ann in coco.loadAnns(coco.getAnnIds(imgIds=img_id)):
+            stats['test'][ann['category_id']] = stats['test'].get(ann['category_id'], 0) + 1
+    
+    return train_ids, val_ids, test_ids, stats
 
 
 def print_split_stats(coco, stats):
     """Afficher les statistiques de distribution des classes"""
-    print("\n   📊 Distribution des classes (split stratifié):")
-    print(f"   {'Classe':<25} {'Train':>8} {'Val':>8} {'Total':>8} {'Val%':>8}")
-    print(f"   {'-'*57}")
+    print("\n   📊 Distribution des classes (split stratifié 70/20/10):")
+    print(f"   {'Classe':<25} {'Train':>8} {'Val':>8} {'Test':>8} {'Total':>8}")
+    print(f"   {'-'*65}")
     
     for cat_id in coco.getCatIds():
         cat_name = coco.cats[cat_id]['name']
         train_count = stats['train'].get(cat_id, 0)
         val_count = stats['val'].get(cat_id, 0)
-        total = train_count + val_count
-        val_pct = (val_count / total * 100) if total > 0 else 0
+        test_count = stats['test'].get(cat_id, 0)
+        total = train_count + val_count + test_count
         
         # Alerte si déséquilibre
-        status = "⚠️" if val_count == 0 else "✅"
-        print(f"   {cat_name:<25} {train_count:>8} {val_count:>8} {total:>8} {val_pct:>7.1f}% {status}")
+        status = "⚠️" if val_count == 0 or test_count == 0 else "✅"
+        print(f"   {cat_name:<25} {train_count:>8} {val_count:>8} {test_count:>8} {total:>8} {status}")
     
-    print(f"   {'-'*57}")
+    print(f"   {'-'*65}")
 
 
-def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes, train_split=0.85):
-    """Convertir le dataset COCO en format YOLO avec split stratifié"""
+def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes, train_split=0.70, val_split=0.20, test_split=0.10):
+    """Convertir le dataset COCO en format YOLO avec split stratifié 70/20/10"""
     
     print("📂 Préparation du dataset YOLO...")
     
@@ -216,8 +234,10 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes, trai
     dirs = {
         'train_img': os.path.join(dataset_dir, "images", "train"),
         'val_img': os.path.join(dataset_dir, "images", "val"),
+        'test_img': os.path.join(dataset_dir, "images", "test"),
         'train_lbl': os.path.join(dataset_dir, "labels", "train"),
         'val_lbl': os.path.join(dataset_dir, "labels", "val"),
+        'test_lbl': os.path.join(dataset_dir, "labels", "test"),
     }
     for d in dirs.values():
         os.makedirs(d, exist_ok=True)
@@ -228,10 +248,10 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes, trai
     
     print(f"   Catégories: {[coco.cats[c]['name'] for c in cat_ids]}")
     
-    # Split stratifié (au lieu du split naïf)
-    train_ids, val_ids, split_stats = stratified_split(coco, train_split, seed=42)
+    # Split stratifié 70/20/10
+    train_ids, val_ids, test_ids, split_stats = stratified_split(coco, train_split, val_split, test_split, seed=42)
     
-    print(f"   Train: {len(train_ids)} images | Val: {len(val_ids)} images")
+    print(f"   Train: {len(train_ids)} images | Val: {len(val_ids)} images | Test: {len(test_ids)} images")
     
     # Afficher les stats de distribution
     print_split_stats(coco, split_stats)
@@ -239,9 +259,10 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes, trai
     splits = {
         'train': (train_ids, dirs['train_img'], dirs['train_lbl']),
         'val': (val_ids, dirs['val_img'], dirs['val_lbl']),
+        'test': (test_ids, dirs['test_img'], dirs['test_lbl']),
     }
     
-    stats = {'train': 0, 'val': 0, 'annotations': 0, 'per_class': {c: 0 for c in classes}}
+    stats = {'train': 0, 'val': 0, 'test': 0, 'annotations': 0, 'per_class': {c: 0 for c in classes}}
     
     for split_name, (img_ids, img_dir, lbl_dir) in splits.items():
         for img_id in img_ids:
@@ -272,17 +293,28 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes, trai
             
             stats[split_name] += 1
     
-    # dataset.yaml
+    # dataset.yaml (inclut test)
     yaml_path = os.path.join(dataset_dir, 'dataset.yaml')
     with open(yaml_path, 'w') as f:
         yaml.dump({
             'path': os.path.abspath(dataset_dir),
             'train': 'images/train',
             'val': 'images/val',
+            'test': 'images/test',
             'names': {i: name for i, name in enumerate(classes)}
         }, f, default_flow_style=False)
     
+    # Sauvegarder les infos du test set pour l'évaluation
+    test_info_path = os.path.join(dataset_dir, 'test_info.json')
+    with open(test_info_path, 'w') as f:
+        json.dump({
+            'test_images_dir': os.path.abspath(dirs['test_img']),
+            'test_labels_dir': os.path.abspath(dirs['test_lbl']),
+            'num_test_images': stats['test'],
+        }, f, indent=2)
+    
     print(f"   Annotations: {stats['annotations']}")
+    print(f"   📁 Test set: {dirs['test_img']}")
     return yaml_path, stats
 
 
@@ -308,7 +340,8 @@ def train_yolo():
     
     yaml_path, dataset_stats = prepare_yolo_dataset(
         CONFIG["images_dir"], CONFIG["annotations_file"],
-        CONFIG["output_dir"], CONFIG["classes"], CONFIG["train_split"]
+        CONFIG["output_dir"], CONFIG["classes"], 
+        CONFIG["train_split"], CONFIG["val_split"], CONFIG["test_split"]
     )
     
     model_name = f"{CONFIG['model_version']}{CONFIG['model_size']}.pt"
