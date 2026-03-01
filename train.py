@@ -112,28 +112,22 @@ def stratified_split(coco, train_split=0.70, val_split=0.20, test_split=0.10, se
     Split stratifié pour garantir que chaque classe est représentée
     proportionnellement dans train, val et test.
     
-    Algorithme:
-    1. Pour chaque image, déterminer la classe "dominante" (la plus fréquente)
-    2. Grouper les images par classe dominante
-    3. Pour chaque groupe, prendre 70% train, 20% val, 10% test
-    4. Fusionner les résultats
-    
     Retourne: train_ids, val_ids, test_ids, stats
     """
     np.random.seed(seed)
     
-    # Déterminer la classe dominante de chaque image
+    # Collecter TOUTES les images avec annotations
+    all_image_ids = []
     image_dominant_class = {}
-    image_all_classes = {}  # Pour les stats
     
     for img_id in coco.imgs:
         ann_ids = coco.getAnnIds(imgIds=img_id)
         anns = coco.loadAnns(ann_ids)
         
         if not anns:
-            image_dominant_class[img_id] = -1
-            image_all_classes[img_id] = []
-            continue
+            continue  # Ignorer les images sans annotations
+        
+        all_image_ids.append(img_id)
         
         # Compter les classes dans cette image
         class_counts = {}
@@ -143,16 +137,16 @@ def stratified_split(coco, train_split=0.70, val_split=0.20, test_split=0.10, se
         
         dominant_class = max(class_counts, key=class_counts.get)
         image_dominant_class[img_id] = dominant_class
-        image_all_classes[img_id] = list(class_counts.keys())
     
     # Grouper les images par classe dominante
     images_by_class = {}
-    for img_id, class_id in image_dominant_class.items():
+    for img_id in all_image_ids:
+        class_id = image_dominant_class[img_id]
         if class_id not in images_by_class:
             images_by_class[class_id] = []
         images_by_class[class_id].append(img_id)
     
-    # Split stratifié 70/20/10
+    # Split stratifié 70/20/10 pour chaque groupe de classe
     train_ids = []
     val_ids = []
     test_ids = []
@@ -164,29 +158,39 @@ def stratified_split(coco, train_split=0.70, val_split=0.20, test_split=0.10, se
         if n == 0:
             continue
         
-        # Calculer les indices de split avec arrondi correct
-        # On utilise round() au lieu de int() pour un meilleur équilibre
-        n_train = max(1, round(n * train_split))
-        n_val = max(1, round(n * val_split)) if n > 1 else 0
-        n_test = max(1, n - n_train - n_val) if n > 2 else 0
-        
-        # Ajuster si le total dépasse n
-        total = n_train + n_val + n_test
-        if total > n:
-            # Réduire proportionnellement
-            if n_test > 0 and total > n:
-                n_test = max(0, n - n_train - n_val)
-            if n_val > 0 and n_train + n_val > n:
-                n_val = max(0, n - n_train)
-        
-        # S'assurer qu'on utilise toutes les images
-        if n_train + n_val + n_test < n:
-            n_train = n - n_val - n_test
-        
-        # Assigner les images
-        train_ids.extend(img_ids[:n_train])
-        val_ids.extend(img_ids[n_train:n_train + n_val])
-        test_ids.extend(img_ids[n_train + n_val:])
+        # Calculer le nombre d'images pour chaque split
+        if n == 1:
+            # Une seule image -> train
+            train_ids.extend(img_ids)
+        elif n == 2:
+            # Deux images -> train + val
+            train_ids.append(img_ids[0])
+            val_ids.append(img_ids[1])
+        elif n <= 5:
+            # Peu d'images -> au moins 1 dans chaque si possible
+            n_test = 1
+            n_val = 1
+            n_train = n - n_test - n_val
+            train_ids.extend(img_ids[:n_train])
+            val_ids.extend(img_ids[n_train:n_train + n_val])
+            test_ids.extend(img_ids[n_train + n_val:])
+        else:
+            # Assez d'images -> split proportionnel
+            n_train = int(n * train_split)
+            n_val = int(n * val_split)
+            n_test = n - n_train - n_val  # Le reste va au test
+            
+            # S'assurer d'au moins 1 dans val et test
+            if n_val == 0:
+                n_val = 1
+                n_train -= 1
+            if n_test == 0:
+                n_test = 1
+                n_train -= 1
+            
+            train_ids.extend(img_ids[:n_train])
+            val_ids.extend(img_ids[n_train:n_train + n_val])
+            test_ids.extend(img_ids[n_train + n_val:])
     
     # Mélanger les résultats finaux
     np.random.shuffle(train_ids)
@@ -215,10 +219,11 @@ def stratified_split(coco, train_split=0.70, val_split=0.20, test_split=0.10, se
     
     # Afficher le résumé du split par images
     total_images = len(train_ids) + len(val_ids) + len(test_ids)
-    print(f"\n   📊 Split des IMAGES:")
-    print(f"      Train: {len(train_ids)} ({len(train_ids)/total_images*100:.1f}%)")
-    print(f"      Val:   {len(val_ids)} ({len(val_ids)/total_images*100:.1f}%)")
-    print(f"      Test:  {len(test_ids)} ({len(test_ids)/total_images*100:.1f}%)")
+    if total_images > 0:
+        print(f"\n   📊 Split des IMAGES:")
+        print(f"      Train: {len(train_ids)} ({len(train_ids)/total_images*100:.1f}%)")
+        print(f"      Val:   {len(val_ids)} ({len(val_ids)/total_images*100:.1f}%)")
+        print(f"      Test:  {len(test_ids)} ({len(test_ids)/total_images*100:.1f}%)")
     
     return train_ids, val_ids, test_ids, stats
 
