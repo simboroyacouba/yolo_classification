@@ -1,41 +1,7 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
-.venv/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Output
-output/
+# outputs
 evaluation/
 predictions/
-test_results/
-
-# Dataset converti
-dataset/
-
-# Modèles
+runs/
+output/
 *.pt
 *.pth
-*.onnx
-
-# Logs
-*.log
-runs/
-
-# OS
-.DS_Store
-Thumbs.db
-
