@@ -1,0 +1,22 @@
+classes:
+- __background__
+- batiment_peint
+- batiment_non_enduit
+- batiment_enduit
+colors:
+  batiment_enduit:
+  - 255
+  - 165
+  - 0
+  batiment_non_enduit:
+  - 0
+  - 0
+  - 255
+  batiment_peint:
+  - 0
+  - 255
+  - 0
+descriptions:
+  batiment_enduit: Dalle beton / toit plat (vue oblique)
+  batiment_non_enduit: Tuiles ou beton non enduit (vue oblique)
+  batiment_peint: Tole bac acier (vue oblique)
