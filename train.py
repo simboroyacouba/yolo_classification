@@ -1,87 +1,168 @@
 """
-Entraînement YOLO pour détection des toitures cadastrales
-Dataset: Images aériennes annotées avec CVAT (format COCO)
-Classes: Chargées depuis classes.yaml
-Configuration: Chargée depuis .env
+Entrainement YOLO dual - nadir (panneau_solaire) / oblique (batiments)
+
+Architecture duale :
+  - Modele nadir   : entraine sur Production_*.png, classe panneau_solaire
+  - Modele oblique : entraine sur Snapshot_*.jpg,   classes batiment_*
+
+Ameliorations vs version initiale :
+  - Augmentations : flipH, flipV, ColorJitter, CosineAnnealingLR
+  - Oversampling  : batiment_peint x5, batiment_enduit x3, batiment_non_enduit x2
+  - Staged training : geler backbone N epochs puis degeler avec LR/5
+  - AP@50 par classe a chaque epoch et apres entrainement
+
+Usage :
+  python train.py --mode nadir
+  python train.py --mode oblique
+  python train.py --mode oblique --freeze-epochs 5
+  python train.py --mode all
+  python train.py --mode oblique --freeze-epochs 5 --images-dir ../dataset1/images/default
 """
 
 import os
 import json
 import yaml
 import shutil
+import argparse
 import numpy as np
 from ultralytics import YOLO
 from pycocotools.coco import COCO
-from PIL import Image
 import matplotlib.pyplot as plt
+from pathlib import Path
 from datetime import datetime
 import time
 import gc
 import torch
 import csv
 import warnings
-warnings.filterwarnings('ignore')
+warnings.filterwarnings("ignore")
 
-# Charger .env
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except ImportError:
-    pass  # dotenv optionnel
+    pass
 
 
 # =============================================================================
-# CHARGEMENT DES CLASSES
+# CONSTANTES
 # =============================================================================
 
-def load_classes(yaml_path="classes.yaml"):
-    """Charger les classes depuis YAML (sans __background__ pour YOLO)"""
+# Classes selon le mode
+MODE_CLASSES = {
+    "nadir":   ["panneau_solaire"],
+    "oblique": ["batiment_peint", "batiment_non_enduit", "batiment_enduit"],
+    "all":     ["panneau_solaire", "batiment_peint", "batiment_non_enduit", "batiment_enduit"],
+}
+
+# Poids d'oversampling pour le mode oblique
+# panneau_solaire retire du modele oblique (P=0.40, gere par le modele nadir)
+OVERSAMPLE_WEIGHTS_OBLIQUE = {
+    "batiment_peint":     5,
+    "batiment_enduit":    3,    # 2.5 arrondi a l'entier superieur
+    "batiment_non_enduit": 2,
+}
+
+
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
+
+def build_config(args):
+    """Construire la config a partir des args CLI et des variables .env."""
+
+    base_annotations = os.getenv(
+        "DETECTION_DATASET_ANNOTATIONS_FILE",
+        "../dataset1/annotations/instances_default.json",
+    )
+    ann_dir = os.path.dirname(os.path.abspath(base_annotations))
+    mode    = args.mode
+
+    # Fichier d'annotations selon le mode
+    if args.annotations_file:
+        annotations_file = args.annotations_file
+    elif mode == "nadir":
+        annotations_file = os.path.join(ann_dir, "instances_nadir.json")
+    elif mode == "oblique":
+        annotations_file = os.path.join(ann_dir, "instances_oblique.json")
+    else:
+        annotations_file = base_annotations
+
+    # Fichier de classes selon le mode
+    if args.classes_file:
+        classes_file = args.classes_file
+    elif mode == "nadir":
+        classes_file = "classes_nadir.yaml"
+    elif mode == "oblique":
+        classes_file = "classes_oblique.yaml"
+    else:
+        classes_file = os.getenv("CLASSES_FILE", "classes.yaml")
+
+    # Dossier de sortie selon le mode
+    if args.output_dir:
+        output_dir = args.output_dir
+    elif mode in ("nadir", "oblique"):
+        output_dir = os.path.join(os.getenv("OUTPUT_DIR", "./output"), mode)
+    else:
+        output_dir = os.getenv("OUTPUT_DIR", "./output")
+
+    return {
+        "mode":             mode,
+        "images_dir":       args.images_dir or os.getenv(
+                                "DETECTION_DATASET_IMAGES_DIR",
+                                "../dataset1/images/default"
+                            ),
+        "annotations_file": annotations_file,
+        "classes_file":     classes_file,
+        "output_dir":       output_dir,
+        "model_version":    os.getenv("YOLO_VERSION", "yolo11"),
+        "model_size":       os.getenv("YOLO_SIZE", "n"),
+        "num_epochs":       int(os.getenv("NUM_EPOCHS", "25")),
+        "batch_size":       int(os.getenv("BATCH_SIZE", "2")),
+        "learning_rate":    float(os.getenv("LEARNING_RATE", "0.005")),
+        "momentum":         0.9,
+        "weight_decay":     0.0005,
+        "image_size":       int(os.getenv("IMAGE_SIZE", "640")),
+        "train_split":      float(os.getenv("TRAIN_SPLIT", "0.70")),
+        "val_split":        float(os.getenv("VAL_SPLIT", "0.20")),
+        "test_split":       float(os.getenv("TEST_SPLIT", "0.10")),
+        "save_every":       5,
+        "freeze_epochs":    args.freeze_epochs,
+        "classes":          None,  # rempli apres chargement du YAML
+    }
+
+
+# =============================================================================
+# CLASSES
+# =============================================================================
+
+def load_classes(yaml_path, mode="all"):
+    """Charger et filtrer les classes depuis le YAML selon le mode."""
+
     if not os.path.exists(yaml_path):
-        raise FileNotFoundError(f"Fichier introuvable: {yaml_path}")
-    
-    with open(yaml_path, 'r', encoding='utf-8') as f:
+        raise FileNotFoundError(
+            f"Fichier classes introuvable : {yaml_path}\n"
+            f"Conseil : lancez d'abord  python split_dataset.py"
+        )
+
+    with open(yaml_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
-    
-    classes = [c for c in data.get('classes', []) if c != '__background__']
-    
-    print(f"📋 Classes chargées depuis {yaml_path}:")
+
+    all_classes = [c for c in data.get("classes", []) if c != "__background__"]
+
+    # Filtrer selon le mode
+    expected = MODE_CLASSES.get(mode, all_classes)
+    classes  = [c for c in all_classes if c in expected]
+
+    if not classes:
+        # Fallback : utiliser directement les classes attendues
+        classes = expected
+
+    print(f"📋 Classes ({mode}) depuis {yaml_path} :")
     for i, c in enumerate(classes):
         print(f"   [{i}] {c}")
-    
+
     return classes
-
-
-# =============================================================================
-# CONFIGURATION (depuis .env)
-# =============================================================================
-
-CONFIG = {
-    # Chemins
-    "images_dir": os.getenv("DETECTION_DATASET_IMAGES_DIR", "../dataset1/images/default"),
-    "annotations_file": os.getenv("DETECTION_DATASET_ANNOTATIONS_FILE", "../dataset1/annotations/instances_default.json"),
-    "test_images_dir": os.getenv("DETECTION_TEST_IMAGES_DIR", "../test"),
-    "output_dir": os.getenv("OUTPUT_DIR", "./output"),
-    "classes_file": os.getenv("CLASSES_FILE", "classes.yaml"),
-    
-    # Classes
-    "classes": None,
-    
-    # Modèle YOLO
-    "model_version": os.getenv("YOLO_VERSION", "yolo26"),
-    "model_size": os.getenv("YOLO_SIZE", "n"),
-    
-    # Hyperparamètres
-    "num_epochs": int(os.getenv("NUM_EPOCHS", "25")),
-    "batch_size": int(os.getenv("BATCH_SIZE", "2")),
-    "learning_rate": float(os.getenv("LEARNING_RATE", "0.005")),
-    "momentum": 0.9,
-    "weight_decay": 0.0005,
-    "image_size": int(os.getenv("IMAGE_SIZE", "640")),
-    "train_split": float(os.getenv("TRAIN_SPLIT", "0.70")),
-    "val_split": float(os.getenv("VAL_SPLIT", "0.20")),
-    "test_split": float(os.getenv("TEST_SPLIT", "0.10")),
-    "save_every": 5,
-}
 
 
 # =============================================================================
@@ -92,391 +173,726 @@ def format_time(seconds):
     if seconds < 60:
         return f"{seconds:.1f}s"
     elif seconds < 3600:
-        return f"{int(seconds//60)}m {int(seconds%60)}s"
+        return f"{int(seconds // 60)}m {int(seconds % 60)}s"
     else:
-        return f"{int(seconds//3600)}h {int((seconds%3600)//60)}m"
+        return f"{int(seconds // 3600)}h {int((seconds % 3600) // 60)}m"
 
 
 def coco_to_yolo_bbox(bbox, img_width, img_height):
-    """Convertir bbox COCO -> YOLO format normalisé"""
+    """Convertir bbox COCO [x,y,w,h] vers YOLO normalise [cx,cy,w,h]."""
     x, y, w, h = bbox
-    x_center = max(0, min(1, (x + w / 2) / img_width))
-    y_center = max(0, min(1, (y + h / 2) / img_height))
-    width = max(0, min(1, w / img_width))
-    height = max(0, min(1, h / img_height))
-    return [x_center, y_center, width, height]
+    cx = max(0.0, min(1.0, (x + w / 2) / img_width))
+    cy = max(0.0, min(1.0, (y + h / 2) / img_height))
+    nw = max(0.0, min(1.0, w / img_width))
+    nh = max(0.0, min(1.0, h / img_height))
+    return [cx, cy, nw, nh]
 
+
+# =============================================================================
+# SPLIT DATASET
+# =============================================================================
 
 def stratified_split(coco, train_split, val_split, test_split, seed=42):
-    """
-    Split stratifié en utilisant une approche globale.
-    
-    Retourne: train_ids, val_ids, test_ids, stats
-    """
+    """Split global des images (pas de stratification par classe pour YOLO)."""
+
     np.random.seed(seed)
-    
-    # Collecter TOUTES les images avec annotations
-    all_image_ids = []
-    
-    for img_id in coco.imgs:
-        ann_ids = coco.getAnnIds(imgIds=img_id)
-        if ann_ids:  # Image a des annotations
-            all_image_ids.append(img_id)
-    
-    # Mélanger toutes les images
-    np.random.shuffle(all_image_ids)
-    
-    # Calculer les tailles de chaque split
-    n_total = len(all_image_ids)
+
+    all_ids = [img_id for img_id in coco.imgs if coco.getAnnIds(imgIds=img_id)]
+    np.random.shuffle(all_ids)
+
+    n_total = len(all_ids)
     n_train = int(n_total * train_split)
-    n_val = int(n_total * val_split)
-    n_test = n_total - n_train - n_val  # Le reste pour test
-    
-    # S'assurer d'avoir au moins quelques images dans chaque split
+    n_val   = int(n_total * val_split)
+    n_test  = n_total - n_train - n_val
+
     if n_test < 1 and n_total > 2:
-        n_test = max(1, int(n_total * 0.10))
+        n_test  = max(1, int(n_total * 0.10))
         n_train = n_total - n_val - n_test
-    
-    print(f"\n   📊 Split des IMAGES (total: {n_total}):")
-    print(f"      Train: {n_train} ({n_train/n_total*100:.1f}%)")
-    print(f"      Val:   {n_val} ({n_val/n_total*100:.1f}%)")
-    print(f"      Test:  {n_test} ({n_test/n_total*100:.1f}%)")
-    
-    # Assigner les images
-    train_ids = all_image_ids[:n_train]
-    val_ids = all_image_ids[n_train:n_train + n_val]
-    test_ids = all_image_ids[n_train + n_val:]
-    
-    # Calculer les statistiques de distribution des annotations
-    stats = {'train': {}, 'val': {}, 'test': {}}
-    
-    for cat_id in coco.getCatIds():
-        stats['train'][cat_id] = 0
-        stats['val'][cat_id] = 0
-        stats['test'][cat_id] = 0
-    
-    for img_id in train_ids:
-        for ann in coco.loadAnns(coco.getAnnIds(imgIds=img_id)):
-            stats['train'][ann['category_id']] += 1
-    
-    for img_id in val_ids:
-        for ann in coco.loadAnns(coco.getAnnIds(imgIds=img_id)):
-            stats['val'][ann['category_id']] += 1
-    
-    for img_id in test_ids:
-        for ann in coco.loadAnns(coco.getAnnIds(imgIds=img_id)):
-            stats['test'][ann['category_id']] += 1
-    
-    return train_ids, val_ids, test_ids, stats
+
+    print(f"\n   Split des images (total : {n_total}) :")
+    print(f"      Train : {n_train}  ({n_train / n_total * 100:.1f}%)")
+    print(f"      Val   : {n_val}   ({n_val   / n_total * 100:.1f}%)")
+    print(f"      Test  : {n_test}  ({n_test  / n_total * 100:.1f}%)")
+
+    train_ids = all_ids[:n_train]
+    val_ids   = all_ids[n_train:n_train + n_val]
+    test_ids  = all_ids[n_train + n_val:]
+
+    return train_ids, val_ids, test_ids
 
 
-def print_split_stats(coco, stats):
-    """Afficher les statistiques de distribution des classes"""
-    print("\n   📊 Distribution des classes (split stratifié 70/20/10):")
-    print(f"   {'Classe':<25} {'Train':>8} {'Val':>8} {'Test':>8} {'Total':>8}")
-    print(f"   {'-'*65}")
-    
-    for cat_id in coco.getCatIds():
-        cat_name = coco.cats[cat_id]['name']
-        train_count = stats['train'].get(cat_id, 0)
-        val_count = stats['val'].get(cat_id, 0)
-        test_count = stats['test'].get(cat_id, 0)
-        total = train_count + val_count + test_count
-        
-        # Alerte si déséquilibre
-        status = "⚠️" if val_count == 0 or test_count == 0 else "✅"
-        print(f"   {cat_name:<25} {train_count:>8} {val_count:>8} {test_count:>8} {total:>8} {status}")
-    
-    print(f"   {'-'*65}")
+# =============================================================================
+# OVERSAMPLING
+# =============================================================================
+
+def oversample_train_set(images_dir, labels_dir, classes, weights_map):
+    """
+    Dupliquer les images d'entrainement pour les classes sous-representees.
+
+    weights_map : {class_name: facteur}
+    Une image est copiee (max_weight - 1) fois supplementaires.
+    Retourne le nombre de copies creees.
+    """
+
+    # Index : class_idx -> poids
+    weight_by_idx = {
+        idx: weights_map[cls_name]
+        for idx, cls_name in enumerate(classes)
+        if cls_name in weights_map
+    }
+
+    if not weight_by_idx:
+        return 0
+
+    IMG_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
+    n_copies = 0
+
+    for lbl_file in sorted(Path(labels_dir).glob("*.txt")):
+        # Ne pas re-oversampler les copies deja creees
+        if "_os" in lbl_file.stem:
+            continue
+
+        max_w = 1
+        try:
+            with open(lbl_file) as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if parts:
+                        cls_id = int(parts[0])
+                        max_w  = max(max_w, weight_by_idx.get(cls_id, 1))
+        except Exception:
+            continue
+
+        if max_w <= 1:
+            continue
+
+        # Trouver l'image correspondante
+        img_file = None
+        for ext in IMG_EXTS:
+            p = Path(images_dir) / (lbl_file.stem + ext)
+            if p.exists():
+                img_file = p
+                break
+
+        if img_file is None:
+            continue
+
+        # Creer les copies supplementaires
+        for k in range(1, max_w):
+            stem = f"{lbl_file.stem}_os{k}"
+            shutil.copy2(lbl_file, Path(labels_dir) / f"{stem}.txt")
+            shutil.copy2(img_file, Path(images_dir) / f"{stem}{img_file.suffix}")
+            n_copies += 1
+
+    return n_copies
 
 
-def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes, train_split, val_split, test_split):
-    """Convertir le dataset COCO en format YOLO avec split stratifié"""
-    
-    print("📂 Préparation du dataset YOLO...")
-    
-    # IMPORTANT: Utiliser un chemin fixe pour éviter les imbrications
-    # Le dataset sera toujours dans ./output/dataset/ peu importe où YOLO sauvegarde
-    base_output = os.path.abspath("./output")
+# =============================================================================
+# PREPARATION DU DATASET YOLO
+# =============================================================================
+
+def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
+                         train_split, val_split, test_split, mode="all"):
+    """
+    Convertir COCO -> format YOLO avec split train/val/test
+    et oversampling optionnel (mode oblique).
+    """
+
+    print("📂 Preparation du dataset YOLO...")
+
+    base_output = os.path.abspath(output_dir)
     dataset_dir = os.path.join(base_output, "dataset")
-    
-    # Nettoyer si existe déjà
+
     if os.path.exists(dataset_dir):
-        import shutil as sh
-        sh.rmtree(dataset_dir)
-    
+        shutil.rmtree(dataset_dir)
+
     dirs = {
-        'train_img': os.path.join(dataset_dir, "images", "train"),
-        'val_img': os.path.join(dataset_dir, "images", "val"),
-        'test_img': os.path.join(dataset_dir, "images", "test"),
-        'train_lbl': os.path.join(dataset_dir, "labels", "train"),
-        'val_lbl': os.path.join(dataset_dir, "labels", "val"),
-        'test_lbl': os.path.join(dataset_dir, "labels", "test"),
+        "train_img": os.path.join(dataset_dir, "images",  "train"),
+        "val_img":   os.path.join(dataset_dir, "images",  "val"),
+        "test_img":  os.path.join(dataset_dir, "images",  "test"),
+        "train_lbl": os.path.join(dataset_dir, "labels",  "train"),
+        "val_lbl":   os.path.join(dataset_dir, "labels",  "val"),
+        "test_lbl":  os.path.join(dataset_dir, "labels",  "test"),
     }
     for d in dirs.values():
         os.makedirs(d, exist_ok=True)
-    
+
     coco = COCO(annotations_file)
-    cat_ids = coco.getCatIds()
-    cat_mapping = {cat_id: idx for idx, cat_id in enumerate(cat_ids)}
-    
-    print(f"   Catégories: {[coco.cats[c]['name'] for c in cat_ids]}")
-    
-    # Split stratifié 70/20/10
-    train_ids, val_ids, test_ids, split_stats = stratified_split(coco, train_split, val_split, test_split, seed=42)
-    
-    print(f"   Train: {len(train_ids)} images | Val: {len(val_ids)} images | Test: {len(test_ids)} images")
-    
-    # Afficher les stats de distribution
-    print_split_stats(coco, split_stats)
-    
-    splits = {
-        'train': (train_ids, dirs['train_img'], dirs['train_lbl']),
-        'val': (val_ids, dirs['val_img'], dirs['val_lbl']),
-        'test': (test_ids, dirs['test_img'], dirs['test_lbl']),
+
+    # Mapping cat_id COCO -> class_idx YOLO (uniquement les classes du mode)
+    cat_ids          = coco.getCatIds()
+    cat_name_to_id   = {coco.cats[cid]["name"]: cid for cid in cat_ids}
+    valid_cat_ids    = [cat_name_to_id[c] for c in classes if c in cat_name_to_id]
+    cat_mapping      = {cat_id: idx for idx, cat_id in enumerate(valid_cat_ids)}
+
+    print(f"   Mode '{mode}' — classes : {[coco.cats[c]['name'] for c in valid_cat_ids]}")
+
+    train_ids, val_ids, test_ids = stratified_split(
+        coco, train_split, val_split, test_split, seed=42
+    )
+
+    splits_map = {
+        "train": (train_ids, dirs["train_img"], dirs["train_lbl"]),
+        "val":   (val_ids,   dirs["val_img"],   dirs["val_lbl"]),
+        "test":  (test_ids,  dirs["test_img"],  dirs["test_lbl"]),
     }
-    
-    stats = {'train': 0, 'val': 0, 'test': 0, 'annotations': 0, 'per_class': {c: 0 for c in classes}}
-    
-    for split_name, (img_ids, img_dir, lbl_dir) in splits.items():
+
+    stats = {
+        "train": 0, "val": 0, "test": 0, "annotations": 0,
+        "per_class": {c: 0 for c in classes},
+    }
+
+    for split_name, (img_ids, img_dir, lbl_dir) in splits_map.items():
         for img_id in img_ids:
             img_info = coco.imgs[img_id]
-            src = os.path.join(images_dir, img_info['file_name'])
+            src      = os.path.join(images_dir, img_info["file_name"])
             if not os.path.exists(src):
                 continue
-            
-            shutil.copy2(src, os.path.join(img_dir, img_info['file_name']))
-            
-            anns = coco.loadAnns(coco.getAnnIds(imgIds=img_id))
-            lbl_path = os.path.join(lbl_dir, os.path.splitext(img_info['file_name'])[0] + '.txt')
-            
-            with open(lbl_path, 'w') as f:
+
+            shutil.copy2(src, os.path.join(img_dir, img_info["file_name"]))
+
+            anns     = coco.loadAnns(coco.getAnnIds(imgIds=img_id))
+            lbl_path = os.path.join(
+                lbl_dir,
+                os.path.splitext(img_info["file_name"])[0] + ".txt",
+            )
+
+            with open(lbl_path, "w") as f:
                 for ann in anns:
-                    if ann.get('iscrowd', 0):
+                    if ann.get("iscrowd", 0):
                         continue
-                    class_id = cat_mapping.get(ann['category_id'])
-                    bbox = ann.get('bbox')
-                    if class_id is None or not bbox or bbox[2] <= 0 or bbox[3] <= 0:
+                    class_id = cat_mapping.get(ann["category_id"])
+                    if class_id is None:
                         continue
-                    
-                    yolo_bbox = coco_to_yolo_bbox(bbox, img_info['width'], img_info['height'])
+                    bbox = ann.get("bbox")
+                    if not bbox or bbox[2] <= 0 or bbox[3] <= 0:
+                        continue
+
+                    yolo_bbox = coco_to_yolo_bbox(
+                        bbox, img_info["width"], img_info["height"]
+                    )
                     f.write(f"{class_id} {' '.join(f'{v:.6f}' for v in yolo_bbox)}\n")
-                    stats['annotations'] += 1
+                    stats["annotations"] += 1
                     if class_id < len(classes):
-                        stats['per_class'][classes[class_id]] += 1
-            
+                        stats["per_class"][classes[class_id]] += 1
+
             stats[split_name] += 1
-    
-    # dataset.yaml (inclut test)
-    yaml_path = os.path.join(dataset_dir, 'dataset.yaml')
-    with open(yaml_path, 'w') as f:
-        yaml.dump({
-            'path': os.path.abspath(dataset_dir),
-            'train': 'images/train',
-            'val': 'images/val',
-            'test': 'images/test',
-            'names': {i: name for i, name in enumerate(classes)}
-        }, f, default_flow_style=False)
-    
-    # Sauvegarder les infos du test set pour l'évaluation
-    test_info_path = os.path.join(dataset_dir, 'test_info.json')
-    with open(test_info_path, 'w') as f:
-        json.dump({
-            'test_images_dir': os.path.abspath(dirs['test_img']),
-            'test_labels_dir': os.path.abspath(dirs['test_lbl']),
-            'num_test_images': stats['test'],
-        }, f, indent=2)
-    
-    print(f"   Annotations: {stats['annotations']}")
-    print(f"   📁 Test set: {dirs['test_img']}")
+
+    # -------------------------------------------------------------------
+    # Oversampling (mode oblique uniquement)
+    # -------------------------------------------------------------------
+
+    if mode == "oblique":
+        print("\n   Oversampling (oblique) :")
+        print(f"      batiment_peint     x{OVERSAMPLE_WEIGHTS_OBLIQUE['batiment_peint']}")
+        print(f"      batiment_enduit    x{OVERSAMPLE_WEIGHTS_OBLIQUE['batiment_enduit']}")
+        print(f"      batiment_non_enduit x{OVERSAMPLE_WEIGHTS_OBLIQUE['batiment_non_enduit']}")
+        n_copies = oversample_train_set(
+            dirs["train_img"], dirs["train_lbl"],
+            classes, OVERSAMPLE_WEIGHTS_OBLIQUE,
+        )
+        stats["oversampling_copies"] = n_copies
+        print(f"   + {n_copies} copies ajoutees au train set")
+
+    # -------------------------------------------------------------------
+    # dataset.yaml
+    # -------------------------------------------------------------------
+
+    yaml_path = os.path.join(dataset_dir, "dataset.yaml")
+    with open(yaml_path, "w") as f:
+        yaml.dump(
+            {
+                "path":  os.path.abspath(dataset_dir),
+                "train": "images/train",
+                "val":   "images/val",
+                "test":  "images/test",
+                "names": {i: name for i, name in enumerate(classes)},
+            },
+            f,
+            default_flow_style=False,
+        )
+
+    # Infos test set pour evaluate_dual.py
+    with open(os.path.join(dataset_dir, "test_info.json"), "w") as f:
+        json.dump(
+            {
+                "mode":            mode,
+                "test_images_dir": os.path.abspath(dirs["test_img"]),
+                "test_labels_dir": os.path.abspath(dirs["test_lbl"]),
+                "num_test_images": stats["test"],
+                "classes":         classes,
+            },
+            f,
+            indent=2,
+        )
+
+    print(f"\n   Annotations  : {stats['annotations']}")
+    print(f"   Par classe   : {stats['per_class']}")
+    print(f"   Dataset      : {dataset_dir}")
+
     return yaml_path, stats
 
 
 # =============================================================================
-# ENTRAÎNEMENT
+# CALLBACKS
 # =============================================================================
 
-def train_yolo():
-    """Entraîner YOLO"""
-    
-    CONFIG["classes"] = load_classes(CONFIG["classes_file"])
-    
-    print("=" * 70)
-    print(f"   YOLO ({CONFIG['model_version']}{CONFIG['model_size']}) - Détection des Toitures")
-    print("=" * 70)
-    print(f"\n📋 CONFIG (.env)")
-    print(f"   Images:      {CONFIG['images_dir']}")
-    print(f"   Annotations: {CONFIG['annotations_file']}")
-    print(f"   Modèle:      {CONFIG['model_version']}{CONFIG['model_size']}")
-    print(f"   Epochs:      {CONFIG['num_epochs']} | Batch: {CONFIG['batch_size']} | LR: {CONFIG['learning_rate']}")
-    
-    os.makedirs(CONFIG["output_dir"], exist_ok=True)
-    
-    yaml_path, dataset_stats = prepare_yolo_dataset(
-        CONFIG["images_dir"], CONFIG["annotations_file"],
-        CONFIG["output_dir"], CONFIG["classes"], 
-        CONFIG["train_split"], CONFIG["val_split"], CONFIG["test_split"]
+def make_staged_training_callback(freeze_epochs):
+    """
+    Callback qui degele le backbone a l'epoch `freeze_epochs`
+    et reduit le LR d'un facteur 5 pour la phase de fine-tuning.
+    """
+
+    def on_train_epoch_start(trainer):
+        if trainer.epoch == freeze_epochs:
+            for _, v in trainer.model.named_parameters():
+                v.requires_grad = True
+            for pg in trainer.optimizer.param_groups:
+                lr = pg.get("initial_lr", pg["lr"])
+                pg["lr"]         = lr / 5
+                pg["initial_lr"] = lr / 5
+            print(f"\n🔓 Backbone degele (epoch {freeze_epochs + 1}) | LR divise par 5")
+
+    return on_train_epoch_start
+
+
+def make_per_class_ap_callback():
+    """
+    Callback qui affiche l'AP@50 par classe apres chaque validation.
+    """
+
+    def on_fit_epoch_end(trainer):
+        if not hasattr(trainer, "validator"):
+            return
+        validator = trainer.validator
+        if not hasattr(validator, "metrics"):
+            return
+
+        box = getattr(validator.metrics, "box", None)
+        if box is None:
+            return
+
+        ap_class_index = getattr(box, "ap_class_index", None)
+        ap_matrix      = getattr(box, "ap", None)
+
+        if ap_class_index is None or ap_matrix is None:
+            return
+        if len(ap_class_index) == 0:
+            return
+
+        ap50 = ap_matrix[:, 0] if ap_matrix.ndim == 2 else ap_matrix
+        names = trainer.data.get("names", {})
+
+        print(f"\n   AP@50 par classe (epoch {trainer.epoch + 1}) :")
+        for idx, ap in zip(ap_class_index, ap50):
+            name = names.get(int(idx), f"class_{idx}")
+            bar  = "█" * int(ap * 20)
+            print(f"      {name:<25} {ap:.4f}  {bar}")
+
+    return on_fit_epoch_end
+
+
+# =============================================================================
+# AFFICHAGE AP PAR CLASSE (apres entrainement)
+# =============================================================================
+
+def display_per_class_ap(model, yaml_path, split="val"):
+    """Lancer une validation et afficher l'AP@50 par classe."""
+
+    print(f"\n📊 AP@50 par classe — validation finale (split={split}) :")
+
+    try:
+        val_results = model.val(data=yaml_path, split=split, verbose=False)
+        box   = val_results.box
+        names = val_results.names
+
+        ap50_per_class = None
+        ap_class_index = getattr(box, "ap_class_index", None)
+
+        if hasattr(box, "ap") and box.ap is not None and box.ap.ndim == 2:
+            ap50_per_class = box.ap[:, 0]
+        elif hasattr(box, "maps") and box.maps is not None:
+            ap50_per_class = box.maps
+
+        if ap50_per_class is not None and ap_class_index is not None and len(ap_class_index) > 0:
+            print(f"   {'Classe':<30} {'AP@50':>8}")
+            print(f"   {'-'*42}")
+            for idx, ap in zip(ap_class_index, ap50_per_class):
+                name = names.get(int(idx), f"class_{idx}")
+                bar  = "█" * int(ap * 20)
+                print(f"   {name:<30} {ap:>8.4f}  {bar}")
+            print(f"   {'-'*42}")
+
+        print(f"   {'mAP@50':<30} {box.map50:>8.4f}")
+        print(f"   {'mAP@50:95':<30} {box.map:>8.4f}")
+        print(f"   {'Precision':<30} {box.mp:>8.4f}")
+        print(f"   {'Recall':<30} {box.mr:>8.4f}")
+
+    except Exception as e:
+        print(f"   Avertissement — AP par classe indisponible : {e}")
+
+
+# =============================================================================
+# COURBES D'ENTRAINEMENT
+# =============================================================================
+
+def plot_training_curves(history, train_dir, mode):
+    """Tracer et sauvegarder les courbes d'entrainement."""
+
+    if not history.get("mAP50"):
+        return
+
+    epochs = range(1, len(history["mAP50"]) + 1)
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    fig.suptitle(f"Courbes d'entrainement YOLO — Mode {mode.upper()}", fontsize=13)
+
+    # Loss totale
+    def safe_sum(a, b, c):
+        return [x + y + z for x, y, z in zip(a, b, c)]
+
+    train_loss = safe_sum(
+        history["train_box_loss"], history["train_cls_loss"], history["train_dfl_loss"]
     )
-    
-    model_name = f"{CONFIG['model_version']}{CONFIG['model_size']}.pt"
-    print(f"\n🧠 Chargement: {model_name}")
-    
+    val_loss = safe_sum(
+        history["val_box_loss"], history["val_cls_loss"], history["val_dfl_loss"]
+    )
+    axes[0, 0].plot(epochs, train_loss, "b-", label="Train")
+    axes[0, 0].plot(epochs, val_loss,   "r-", label="Val")
+    axes[0, 0].set_title("Loss totale")
+    axes[0, 0].legend()
+    axes[0, 0].grid(True, alpha=0.3)
+
+    # mAP
+    axes[0, 1].plot(epochs, history["mAP50"],    "g-", label="mAP@50")
+    axes[0, 1].plot(epochs, history["mAP50_95"], "b-", label="mAP@50:95")
+    axes[0, 1].set_title("mAP")
+    axes[0, 1].legend()
+    axes[0, 1].grid(True, alpha=0.3)
+    axes[0, 1].set_ylim(0, 1)
+
+    # Precision / Recall
+    axes[1, 0].plot(epochs, history["precision"], "g-", label="Precision")
+    axes[1, 0].plot(epochs, history["recall"],    "b-", label="Recall")
+    axes[1, 0].set_title("Precision / Recall")
+    axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3)
+    axes[1, 0].set_ylim(0, 1)
+
+    # Composantes loss (train)
+    axes[1, 1].plot(epochs, history["train_box_loss"], label="Box")
+    axes[1, 1].plot(epochs, history["train_cls_loss"], label="Cls")
+    axes[1, 1].plot(epochs, history["train_dfl_loss"], label="DFL")
+    axes[1, 1].set_title("Composantes Loss (train)")
+    axes[1, 1].legend()
+    axes[1, 1].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    out = os.path.join(train_dir, "training_curves.png")
+    plt.savefig(out, dpi=150)
+    plt.close()
+    print(f"   Courbes : {out}")
+
+
+# =============================================================================
+# ENTRAINEMENT
+# =============================================================================
+
+def train_yolo(config):
+    """Lancer l'entrainement YOLO avec la config donnee."""
+
+    mode    = config["mode"]
+    classes = config["classes"]
+
+    print("=" * 70)
+    print(f"   YOLO ({config['model_version']}{config['model_size']}) — Mode : {mode.upper()}")
+    print("=" * 70)
+    print(f"\n📋 Configuration :")
+    print(f"   Mode          : {mode}")
+    print(f"   Images        : {config['images_dir']}")
+    print(f"   Annotations   : {config['annotations_file']}")
+    print(f"   Classes       : {classes}")
+    print(f"   Modele        : {config['model_version']}{config['model_size']}")
+    print(f"   Epochs        : {config['num_epochs']}  Batch : {config['batch_size']}  LR : {config['learning_rate']}")
+    print(f"   Freeze epochs : {config['freeze_epochs']}")
+    print(f"   LR schedule   : CosineAnnealingLR")
+
+    if not os.path.exists(config["annotations_file"]):
+        raise FileNotFoundError(
+            f"Annotations introuvables : {config['annotations_file']}\n"
+            f"Lancez d'abord : python split_dataset.py"
+        )
+
+    os.makedirs(config["output_dir"], exist_ok=True)
+
+    yaml_path, dataset_stats = prepare_yolo_dataset(
+        config["images_dir"],
+        config["annotations_file"],
+        config["output_dir"],
+        classes,
+        config["train_split"],
+        config["val_split"],
+        config["test_split"],
+        mode=mode,
+    )
+
+    model_name = f"{config['model_version']}{config['model_size']}.pt"
+    print(f"\n🧠 Chargement : {model_name}")
+
     gc.collect()
     model = YOLO(model_name)
-    
+
+    # -------------------------------------------------------------------
+    # Callbacks
+    # -------------------------------------------------------------------
+
+    # AP@50 par classe a chaque epoch
+    model.add_callback("on_fit_epoch_end", make_per_class_ap_callback())
+
+    # Staged training : geler puis degeler
+    freeze_n_layers = 0
+    if config["freeze_epochs"] > 0:
+        freeze_n_layers = 10  # Premiere couches du backbone YOLO
+        model.add_callback(
+            "on_train_epoch_start",
+            make_staged_training_callback(config["freeze_epochs"]),
+        )
+        print(
+            f"\n🔒 Staged training : {freeze_n_layers} couches gelees "
+            f"pour les {config['freeze_epochs']} premieres epochs"
+        )
+
+    # -------------------------------------------------------------------
+    # Entrainement
+    # -------------------------------------------------------------------
+
     print("\n" + "=" * 70)
-    print(f"   🚀 ENTRAÎNEMENT - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"   ENTRAINEMENT — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 70)
-    
+
     start_time = time.time()
-    
-    # Laisser YOLO gérer ses propres chemins (pas de project/name)
+
     results = model.train(
         data=yaml_path,
-        epochs=CONFIG["num_epochs"],
-        batch=CONFIG["batch_size"],
-        imgsz=CONFIG["image_size"],
-        lr0=CONFIG["learning_rate"],
-        momentum=CONFIG["momentum"],
-        weight_decay=CONFIG["weight_decay"],
+        epochs=config["num_epochs"],
+        batch=config["batch_size"],
+        imgsz=config["image_size"],
+        lr0=config["learning_rate"],
+        momentum=config["momentum"],
+        weight_decay=config["weight_decay"],
+        # ---- CosineAnnealingLR (remplace StepLR trop agressif) ----
+        cos_lr=True,
+        # ---- Augmentations ----
+        fliplr=0.5,          # Flip horizontal (p=0.5)
+        flipud=0.5,          # Flip vertical   (p=0.5)
+        # Rotation 180° uniquement : flipud + fliplr ensemble = ~180°
+        # degrees=0 evite les rotations 90°/270° invalides en oblique
+        degrees=0.0,
+        # ColorJitter
+        hsv_h=0.05,          # Hue       ≈ hue=0.05
+        hsv_s=0.2,           # Saturation≈ saturation=0.2
+        hsv_v=0.3,           # Value     ≈ brightness=0.3
+        # Pas de mosaic/mixup sur petit dataset
+        mosaic=0.0,
+        mixup=0.0,
+        # ---- Staged training ----
+        freeze=freeze_n_layers if config["freeze_epochs"] > 0 else 0,
+        # ---- Divers ----
         seed=42,
         verbose=True,
         save=True,
-        save_period=CONFIG["save_every"],
+        save_period=config["save_every"],
         plots=True,
         cache=False,
         workers=0,
     )
-    
+
     total_time = time.time() - start_time
-    
+
     gc.collect()
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-    
-    # Récupérer le chemin directement depuis YOLO
-    train_dir = str(results.save_dir)
+
+    train_dir   = str(results.save_dir)
     weights_dir = os.path.join(train_dir, "weights")
-    
-    print(f"\n📁 Dossier d'entraînement YOLO: {train_dir}")
-    print(f"📁 Dossier des poids: {weights_dir}")
-    
-    # Récupérer métriques
-    history = {'mAP50': [], 'mAP50_95': [], 'precision': [], 'recall': [],
-               'train_box_loss': [], 'train_cls_loss': [], 'train_dfl_loss': [],
-               'val_box_loss': [], 'val_cls_loss': [], 'val_dfl_loss': []}
-    
+
+    print(f"\n📁 Dossier YOLO : {train_dir}")
+
+    # -------------------------------------------------------------------
+    # AP@50 par classe apres entrainement
+    # -------------------------------------------------------------------
+
+    display_per_class_ap(model, yaml_path, split="val")
+
+    # -------------------------------------------------------------------
+    # Historique des metriques
+    # -------------------------------------------------------------------
+
+    history = {
+        "mAP50": [], "mAP50_95": [], "precision": [], "recall": [],
+        "train_box_loss": [], "train_cls_loss": [], "train_dfl_loss": [],
+        "val_box_loss":   [], "val_cls_loss":   [], "val_dfl_loss":   [],
+    }
+
     results_csv = os.path.join(train_dir, "results.csv")
     if os.path.exists(results_csv):
-        with open(results_csv, 'r') as f:
+        with open(results_csv, "r") as f:
             for row in csv.DictReader(f):
                 row = {k.strip(): v for k, v in row.items()}
-                for key, col in [('mAP50', 'metrics/mAP50(B)'), ('mAP50_95', 'metrics/mAP50-95(B)'),
-                                 ('precision', 'metrics/precision(B)'), ('recall', 'metrics/recall(B)'),
-                                 ('train_box_loss', 'train/box_loss'), ('train_cls_loss', 'train/cls_loss'),
-                                 ('train_dfl_loss', 'train/dfl_loss'), ('val_box_loss', 'val/box_loss'),
-                                 ('val_cls_loss', 'val/cls_loss'), ('val_dfl_loss', 'val/dfl_loss')]:
+                for key, col in [
+                    ("mAP50",          "metrics/mAP50(B)"),
+                    ("mAP50_95",       "metrics/mAP50-95(B)"),
+                    ("precision",      "metrics/precision(B)"),
+                    ("recall",         "metrics/recall(B)"),
+                    ("train_box_loss", "train/box_loss"),
+                    ("train_cls_loss", "train/cls_loss"),
+                    ("train_dfl_loss", "train/dfl_loss"),
+                    ("val_box_loss",   "val/box_loss"),
+                    ("val_cls_loss",   "val/cls_loss"),
+                    ("val_dfl_loss",   "val/dfl_loss"),
+                ]:
                     try:
                         history[key].append(float(row.get(col, 0) or 0))
-                    except:
+                    except Exception:
                         pass
-    
-    history['time_stats'] = {
-        'total_time': total_time,
-        'total_time_formatted': format_time(total_time),
-        'avg_epoch_time_formatted': format_time(total_time / CONFIG["num_epochs"]),
+
+    history["time_stats"] = {
+        "total_time":               total_time,
+        "total_time_formatted":     format_time(total_time),
+        "avg_epoch_time_formatted": format_time(total_time / max(config["num_epochs"], 1)),
     }
-    history['config'] = CONFIG
-    history['dataset_stats'] = dataset_stats
-    
-    with open(os.path.join(train_dir, "history.json"), 'w') as f:
+    history["config"]        = {
+        k: v for k, v in config.items()
+        if isinstance(v, (str, int, float, bool, list))
+    }
+    history["dataset_stats"] = dataset_stats
+
+    with open(os.path.join(train_dir, "history.json"), "w") as f:
         json.dump(history, f, indent=2, default=str)
-    
-    # Copier modèles vers la racine du dossier YOLO
-    print("\n📦 Copie des modèles...")
-    models_copied = []
-    
+
+    # -------------------------------------------------------------------
+    # Copier les modeles
+    # -------------------------------------------------------------------
+
+    print("\n📦 Copie des modeles :")
     for src, dst in [("best.pt", "best_model.pt"), ("last.pt", "final_model.pt")]:
-        src_path = os.path.join(weights_dir, src)
-        dst_path = os.path.join(train_dir, dst)
-        if os.path.exists(src_path):
-            shutil.copy2(src_path, dst_path)
-            models_copied.append(dst)
-            print(f"   ✅ {dst} ({os.path.getsize(dst_path) / 1024 / 1024:.1f} MB)")
+        src_p = os.path.join(weights_dir, src)
+        dst_p = os.path.join(train_dir, dst)
+        if os.path.exists(src_p):
+            shutil.copy2(src_p, dst_p)
+            print(f"   {dst} ({os.path.getsize(dst_p) / 1024 / 1024:.1f} MB)")
         else:
-            print(f"   ⚠️ {src} non trouvé dans {weights_dir}")
-    
-    if not models_copied:
-        print("   ❌ Aucun modèle trouvé!")
-        print(f"\n   Contenu de {train_dir}:")
-        for item in os.listdir(train_dir):
-            item_path = os.path.join(train_dir, item)
-            if os.path.isdir(item_path):
-                print(f"      📁 {item}/")
-                for sub in os.listdir(item_path)[:5]:
-                    print(f"         - {sub}")
-    
-    # Rapport
-    best = {k: max(history[k]) if history[k] else 0 for k in ['mAP50', 'mAP50_95', 'precision', 'recall']}
-    
+            print(f"   Avertissement — {src} non trouve dans {weights_dir}")
+
+    # Sauvegarder les infos du modele pour inference_dual.py et evaluate_dual.py
+    model_info = {
+        "mode":        mode,
+        "train_dir":   train_dir,
+        "best_model":  os.path.join(train_dir, "best_model.pt"),
+        "final_model": os.path.join(train_dir, "final_model.pt"),
+        "dataset_yaml": yaml_path,
+        "classes":     classes,
+        "image_size":  config["image_size"],
+        "trained_at":  datetime.now().isoformat(),
+    }
+    info_path = os.path.join(config["output_dir"], f"model_info_{mode}.json")
+    with open(info_path, "w") as f:
+        json.dump(model_info, f, indent=2)
+
+    # -------------------------------------------------------------------
+    # Courbes d'entrainement
+    # -------------------------------------------------------------------
+
+    plot_training_curves(history, train_dir, mode)
+
+    # -------------------------------------------------------------------
+    # Rapport final
+    # -------------------------------------------------------------------
+
+    best = {k: max(history[k]) if history[k] else 0
+            for k in ["mAP50", "mAP50_95", "precision", "recall"]}
+
     print("\n" + "=" * 70)
-    print("   🎉 TERMINÉ")
+    print(f"   TERMINE — {mode.upper()}")
     print("=" * 70)
-    print(f"   mAP@50:     {best['mAP50']:.4f} ({best['mAP50']*100:.2f}%)")
-    print(f"   mAP@50:95:  {best['mAP50_95']:.4f}")
-    print(f"   Precision:  {best['precision']:.4f}")
-    print(f"   Recall:     {best['recall']:.4f}")
-    print(f"   ⏱️  Temps:    {format_time(total_time)}")
-    print(f"   📁 Modèles:  {train_dir}")
+    print(f"   mAP@50      : {best['mAP50']:.4f} ({best['mAP50'] * 100:.2f}%)")
+    print(f"   mAP@50:95   : {best['mAP50_95']:.4f}")
+    print(f"   Precision   : {best['precision']:.4f}")
+    print(f"   Recall      : {best['recall']:.4f}")
+    print(f"   Temps       : {format_time(total_time)}")
+    print(f"   Modeles     : {train_dir}")
     print("=" * 70)
-    
-    # Rapport texte
-    with open(os.path.join(train_dir, "training_report.txt"), 'w', encoding='utf-8') as f:
-        f.write(f"YOLO ({CONFIG['model_version']}{CONFIG['model_size']}) - Rapport\n")
+
+    with open(os.path.join(train_dir, "training_report.txt"), "w", encoding="utf-8") as f:
+        f.write(f"YOLO ({config['model_version']}{config['model_size']}) — Mode {mode}\n")
         f.write("=" * 50 + "\n\n")
-        f.write(f"Dataset: {CONFIG['images_dir']}\n")
-        f.write(f"Classes: {CONFIG['classes']}\n")
-        f.write(f"Epochs: {CONFIG['num_epochs']} | Batch: {CONFIG['batch_size']}\n\n")
-        f.write(f"mAP@50: {best['mAP50']:.4f}\nmAP@50:95: {best['mAP50_95']:.4f}\n")
-        f.write(f"Precision: {best['precision']:.4f}\nRecall: {best['recall']:.4f}\n")
-        f.write(f"Temps: {format_time(total_time)}\n")
-        f.write(f"Chemin: {train_dir}\n")
-    
-    # Graphiques
-    if history['mAP50']:
-        epochs = range(1, len(history['mAP50']) + 1)
-        fig, axes = plt.subplots(2, 2, figsize=(12, 10))
-        
-        train_loss = [a+b+c for a,b,c in zip(history['train_box_loss'], history['train_cls_loss'], history['train_dfl_loss'])]
-        val_loss = [a+b+c for a,b,c in zip(history['val_box_loss'], history['val_cls_loss'], history['val_dfl_loss'])]
-        axes[0,0].plot(epochs, train_loss, 'b-', label='Train')
-        axes[0,0].plot(epochs, val_loss, 'r-', label='Val')
-        axes[0,0].set_title('Loss'); axes[0,0].legend(); axes[0,0].grid(True, alpha=0.3)
-        
-        axes[0,1].plot(epochs, history['mAP50'], 'g-', label='mAP@50')
-        axes[0,1].plot(epochs, history['mAP50_95'], 'b-', label='mAP@50:95')
-        axes[0,1].set_title('mAP'); axes[0,1].legend(); axes[0,1].grid(True, alpha=0.3); axes[0,1].set_ylim(0,1)
-        
-        axes[1,0].plot(epochs, history['precision'], 'g-', label='Precision')
-        axes[1,0].plot(epochs, history['recall'], 'b-', label='Recall')
-        axes[1,0].set_title('Precision/Recall'); axes[1,0].legend(); axes[1,0].grid(True, alpha=0.3); axes[1,0].set_ylim(0,1)
-        
-        axes[1,1].plot(epochs, history['train_box_loss'], label='Box')
-        axes[1,1].plot(epochs, history['train_cls_loss'], label='Cls')
-        axes[1,1].plot(epochs, history['train_dfl_loss'], label='DFL')
-        axes[1,1].set_title('Loss Components'); axes[1,1].legend(); axes[1,1].grid(True, alpha=0.3)
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(train_dir, 'training_curves.png'), dpi=150)
-        plt.close()
-    
-    # Afficher le chemin final des modèles
-    print(f"\n📁 Modèles sauvegardés dans: {train_dir}")
-    print(f"   - {os.path.join(train_dir, 'best_model.pt')}")
-    print(f"   - {os.path.join(train_dir, 'final_model.pt')}")
-    
-    return model, history
+        f.write(f"Dataset      : {config['images_dir']}\n")
+        f.write(f"Mode         : {mode}\n")
+        f.write(f"Classes      : {classes}\n")
+        f.write(f"Epochs       : {config['num_epochs']}  Batch : {config['batch_size']}\n")
+        f.write(f"LR schedule  : CosineAnnealingLR (cos_lr=True)\n")
+        f.write(f"Freeze       : {config['freeze_epochs']} epochs\n\n")
+        f.write(f"mAP@50       : {best['mAP50']:.4f}\n")
+        f.write(f"mAP@50:95    : {best['mAP50_95']:.4f}\n")
+        f.write(f"Precision    : {best['precision']:.4f}\n")
+        f.write(f"Recall       : {best['recall']:.4f}\n")
+        f.write(f"Temps        : {format_time(total_time)}\n")
+        f.write(f"Chemin       : {train_dir}\n")
+
+    return model, history, train_dir
+
+
+# =============================================================================
+# MAIN
+# =============================================================================
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Entrainement YOLO dual — nadir / oblique / all",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["nadir", "oblique", "all"],
+        default="all",
+        help=(
+            "Mode d'entrainement : "
+            "nadir (panneau_solaire uniquement), "
+            "oblique (batiments uniquement), "
+            "all (toutes les classes)"
+        ),
+    )
+    parser.add_argument("--images-dir",       default=None, help="Dossier images du dataset")
+    parser.add_argument("--annotations-file", default=None, help="Fichier annotations COCO JSON")
+    parser.add_argument("--classes-file",     default=None, help="Fichier classes YAML")
+    parser.add_argument("--output-dir",       default=None, help="Dossier de sortie")
+    parser.add_argument(
+        "--freeze-epochs",
+        type=int,
+        default=0,
+        help=(
+            "Nombre d'epochs avec backbone gele (staged training). "
+            "0 = pas de staged training."
+        ),
+    )
+    args = parser.parse_args()
+
+    config = build_config(args)
+    config["classes"] = load_classes(config["classes_file"], mode=config["mode"])
+
+    if not config["classes"]:
+        print(f"Erreur : aucune classe pour le mode '{config['mode']}'")
+        return
+
+    model, history, train_dir = train_yolo(config)
+
+    print(f"\nProchaines etapes :")
+    if config["mode"] == "nadir":
+        print(f"   python train.py --mode oblique")
+    elif config["mode"] == "oblique":
+        print(f"   python train.py --mode nadir")
+    print(f"   python evaluate_dual.py")
+    print(f"   python inference_dual.py --input ../test")
 
 
 if __name__ == "__main__":
-    train_yolo()
+    main()
