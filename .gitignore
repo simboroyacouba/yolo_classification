@@ -1,7 +1,6 @@
-# outputs
-evaluation/
-predictions/
+# output/
+# predictions/
 runs/
-output/
+data/
 *.pt
 *.pth

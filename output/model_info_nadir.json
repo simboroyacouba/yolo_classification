@@ -1,0 +1,8 @@
+{
+  "mode": "nadir",
+  "best_model": "C:/Users/NEBRATA/Desktop/Memoire/modeles/classification/yolo_classification/runs/detect/train2/weights/best.pt",
+  "dataset_yaml": "C:/Users/NEBRATA/Desktop/Memoire/modeles/classification/yolo_classification/runs/detect/train/nadir/dataset/dataset.yaml",
+  "classes": ["panneau_solaire"],
+  "mAP50": 0.9356,
+  "mAP50_95": 0.6587
+}

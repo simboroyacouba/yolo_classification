@@ -1,0 +1,26 @@
+{
+  "mode": "nadir",
+  "model": "C:/Users/NEBRATA/Desktop/Memoire/modeles/classification/yolo_classification/runs/detect/train2/weights/best.pt",
+  "dataset_yaml": "C:/Users/NEBRATA/Desktop/Memoire/modeles/classification/yolo_classification/runs/detect/train/nadir/dataset/dataset.yaml",
+  "mAP50": 0.9560825731717711,
+  "mAP50_95": 0.7199020234176937,
+  "precision": 0.9002896014198746,
+  "recall": 0.9439252336448598,
+  "f1_score": 0.9215911901483685,
+  "inference_ms": 3893.8377143016883,
+  "fps_gpu": 0.25681604457399365,
+  "params_M": null,
+  "per_class_AP50": {
+    "panneau_solaire": 0.7199020234176937
+  },
+  "per_class_precision": {
+    "panneau_solaire": 0.9002896014198746
+  },
+  "per_class_recall": {
+    "panneau_solaire": 0.9439252336448598
+  },
+  "per_class_f1": {
+    "panneau_solaire": 0.9215911901483685
+  },
+  "evaluated_at": "2026-04-11T12:45:57.235706"
+}

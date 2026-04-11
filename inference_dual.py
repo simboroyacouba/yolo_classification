@@ -70,8 +70,12 @@ IMG_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 # DECOUVERTE AUTOMATIQUE DES MODELES
 # =============================================================================
 
-def find_model(mode, output_base="./output"):
+def find_model(mode, output_base=None):
     """Trouver automatiquement le meilleur modele pour un mode donne."""
+
+    script_dir = Path(__file__).parent
+    if output_base is None:
+        output_base = str(script_dir / "output")
 
     # 1. Lire model_info_{mode}.json genere par train.py
     info_path = os.path.join(output_base, f"model_info_{mode}.json")
@@ -94,17 +98,24 @@ def find_model(mode, output_base="./output"):
                     print(f"   [{mode}] scan -> {pt}")
                     return pt
 
-    # 3. Chercher dans runs/detect/
-    if os.path.exists("runs/detect"):
+    # 3. Chercher dans runs/detect/ (chemin absolu depuis le script)
+    script_dir = Path(__file__).parent
+    runs_dir = script_dir / "runs" / "detect"
+    if runs_dir.exists():
         folders = sorted(
-            [f for f in os.listdir("runs/detect") if f.startswith("train")],
-            key=lambda x: int(x.replace("train", "") or "0"),
+            [f for f in runs_dir.iterdir() if f.is_dir() and f.name.startswith("train")],
+            key=lambda x: int(x.name.replace("train", "") or "0"),
         )
         for folder in reversed(folders):
-            pt = f"runs/detect/{folder}/weights/best.pt"
-            if os.path.exists(pt):
+            pt = folder / "weights" / "best.pt"
+            if pt.exists():
                 print(f"   [{mode}] runs/detect -> {pt}")
-                return pt
+                return str(pt)
+
+    # 4. Chercher dans data/*/runs/detect/ (modeles importes / Kaggle)
+    for pt_path in sorted(script_dir.glob("data/*/runs/detect/*/weights/best.pt")):
+        print(f"   [{mode}] data/runs -> {pt_path}")
+        return str(pt_path)
 
     return None
 

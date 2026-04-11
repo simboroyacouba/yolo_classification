@@ -50,8 +50,12 @@ COLORS_MAP = {
 # DECOUVERTE AUTOMATIQUE
 # =============================================================================
 
-def find_model_and_data(mode, output_base="./output"):
+def find_model_and_data(mode, output_base=None):
     """Trouver le chemin du modele et du dataset.yaml pour un mode donne."""
+
+    script_dir = Path(__file__).parent
+    if output_base is None:
+        output_base = str(script_dir / "output")
 
     model_path = None
     data_yaml  = None
@@ -79,11 +83,31 @@ def find_model_and_data(mode, output_base="./output"):
                         print(f"   [{mode}] scan -> {model_path}")
                         break
 
-    # 3. dataset.yaml
+    # 3. Parcourir runs/detect/ puis data/*/runs/detect/ (chemins absolus)
+    if not model_path:
+        script_dir = Path(__file__).parent
+        for glob_pattern in ["runs/detect/*/weights/best.pt",
+                             "data/*/runs/detect/*/weights/best.pt"]:
+            candidates = sorted(script_dir.glob(glob_pattern))
+            if candidates:
+                model_path = str(candidates[-1])  # train la plus recente
+                print(f"   [{mode}] runs -> {model_path}")
+                break
+
+    # 4. dataset.yaml — chercher dans output/{mode}/ puis output/ puis data/*/output/
     if not data_yaml:
         yaml_candidate = os.path.join(output_base, mode, "dataset", "dataset.yaml")
         if os.path.exists(yaml_candidate):
             data_yaml = yaml_candidate
+
+    if not data_yaml:
+        script_dir = Path(__file__).parent
+        for glob_pattern in ["output/dataset/dataset.yaml",
+                             "data/*/output/dataset/dataset.yaml"]:
+            candidates = sorted(script_dir.glob(glob_pattern))
+            if candidates:
+                data_yaml = str(candidates[-1])
+                break
 
     return model_path, data_yaml
 
@@ -117,6 +141,13 @@ def evaluate_model(model_path, data_yaml, mode, output_dir):
 
     model = YOLO(model_path)
 
+    # Paramètres du modèle (en millions)
+    try:
+        model_info = model.info(verbose=False)
+        n_params_M = float(model_info[1]) / 1e6
+    except Exception:
+        n_params_M = None
+
     # Evaluation sur le test set
     print("\n   Evaluation sur le test set...")
     results = model.val(data=data_yaml, split="test", verbose=False)
@@ -124,43 +155,87 @@ def evaluate_model(model_path, data_yaml, mode, output_dir):
     box   = results.box
     names = results.names
 
-    # Metriques par classe
-    per_class_ap50 = {}
+    # Vitesse d'inférence (ms) et FPS GPU
+    speed         = getattr(results, "speed", {}) or {}
+    inference_ms  = float(speed.get("inference", 0)) or None
+    fps_gpu       = (1000.0 / inference_ms) if inference_ms else None
+
+    # Metriques par classe (AP50 + precision + recall + F1)
     ap_class_index = getattr(box, "ap_class_index", None)
     ap_matrix      = getattr(box, "ap",             None)
+    p_per_cls      = getattr(box, "p",              None)   # precision par classe
+    r_per_cls      = getattr(box, "r",              None)   # recall par classe
+
+    per_class_ap50      = {}
+    per_class_precision = {}
+    per_class_recall    = {}
+    per_class_f1        = {}
 
     if ap_matrix is not None and ap_class_index is not None:
         ap50 = ap_matrix[:, 0] if ap_matrix.ndim == 2 else ap_matrix
-        for idx, ap in zip(ap_class_index, ap50):
+        for i, (idx, ap) in enumerate(zip(ap_class_index, ap50)):
             cls_name = names.get(int(idx), f"class_{idx}")
             per_class_ap50[cls_name] = float(ap)
 
+            pc = float(p_per_cls[i]) if p_per_cls is not None and i < len(p_per_cls) else None
+            rc = float(r_per_cls[i]) if r_per_cls is not None and i < len(r_per_cls) else None
+
+            if pc is not None:
+                per_class_precision[cls_name] = pc
+            if rc is not None:
+                per_class_recall[cls_name] = rc
+            if pc is not None and rc is not None and (pc + rc) > 0:
+                per_class_f1[cls_name] = 2 * pc * rc / (pc + rc)
+
+    # F1 score moyen global
+    p, r = float(box.mp), float(box.mr)
+    f1_score = (2 * p * r / (p + r)) if (p + r) > 0 else 0.0
+
     metrics = {
-        "mode":             mode,
-        "model":            model_path,
-        "dataset_yaml":     data_yaml,
-        "mAP50":            float(box.map50),
-        "mAP50_95":         float(box.map),
-        "precision":        float(box.mp),
-        "recall":           float(box.mr),
-        "per_class_AP50":   per_class_ap50,
-        "evaluated_at":     datetime.now().isoformat(),
+        "mode":                 mode,
+        "model":                model_path,
+        "dataset_yaml":         data_yaml,
+        "mAP50":                float(box.map50),
+        "mAP50_95":             float(box.map),
+        "precision":            p,
+        "recall":               r,
+        "f1_score":             f1_score,
+        "inference_ms":         inference_ms,
+        "fps_gpu":              fps_gpu,
+        "params_M":             n_params_M,
+        "per_class_AP50":       per_class_ap50,
+        "per_class_precision":  per_class_precision,
+        "per_class_recall":     per_class_recall,
+        "per_class_f1":         per_class_f1,
+        "evaluated_at":         datetime.now().isoformat(),
     }
 
-    # Afficher le tableau
-    print(f"\n   {'Metrique':<28} {'Valeur':>8}")
-    print(f"   {'-'*38}")
-    print(f"   {'mAP@50':<28} {metrics['mAP50']:>8.4f}")
-    print(f"   {'mAP@50:95':<28} {metrics['mAP50_95']:>8.4f}")
-    print(f"   {'Precision':<28} {metrics['precision']:>8.4f}")
-    print(f"   {'Recall':<28} {metrics['recall']:>8.4f}")
+    # Afficher le tableau global
+    print(f"\n   {'Metrique':<32} {'Valeur':>10}")
+    print(f"   {'-'*44}")
+    print(f"   {'mAP@50':<32} {metrics['mAP50']:>10.4f}")
+    print(f"   {'mAP@50:95':<32} {metrics['mAP50_95']:>10.4f}")
+    print(f"   {'Precision':<32} {metrics['precision']:>10.4f}")
+    print(f"   {'Recall':<32} {metrics['recall']:>10.4f}")
+    print(f"   {'F1 Score':<32} {metrics['f1_score']:>10.4f}")
+    if inference_ms is not None:
+        print(f"   {'Vitesse Inference (ms) ↓':<32} {inference_ms:>10.2f}")
+    if fps_gpu is not None:
+        print(f"   {'FPS GPU':<32} {fps_gpu:>10.1f}")
+    if n_params_M is not None:
+        print(f"   {'Parametres (M)':<32} {n_params_M:>10.2f}")
 
+    # Afficher le tableau par classe
     if per_class_ap50:
-        print(f"\n   AP@50 par classe :")
-        for cls, ap in sorted(per_class_ap50.items()):
-            bar    = "█" * int(ap * 20)
+        print(f"\n   {'Classe':<25} {'AP@50':>7} {'Prec':>7} {'Recall':>7} {'F1':>7}  Statut")
+        print(f"   {'-'*62}")
+        for cls in sorted(per_class_ap50.keys()):
+            ap  = per_class_ap50.get(cls, float("nan"))
+            pc  = per_class_precision.get(cls, float("nan"))
+            rc  = per_class_recall.get(cls, float("nan"))
+            f1c = per_class_f1.get(cls, float("nan"))
             status = "OK" if ap >= 0.5 else ("~" if ap >= 0.3 else "!!")
-            print(f"      {cls:<25} {ap:.4f}  {bar}  [{status}]")
+            print(f"      {cls:<25} {ap:>7.4f} {pc:>7.4f} {rc:>7.4f} {f1c:>7.4f}  [{status}]")
 
     # Sauvegarder
     os.makedirs(output_dir, exist_ok=True)
@@ -184,32 +259,29 @@ def print_combined_report(nadir_metrics, oblique_metrics, output_dir):
     print("=" * 65)
 
     # Tableau par classe
-    print(f"\n   {'Classe':<25} {'Modele':<10} {'AP@50':>8}  Statut")
-    print(f"   {'-'*55}")
+    print(f"\n   {'Classe':<25} {'Modele':<10} {'AP@50':>7} {'Prec':>7} {'Recall':>7} {'F1':>7}  Statut")
+    print(f"   {'-'*72}")
 
     all_results = {}
 
-    if nadir_metrics:
-        for cls, ap in nadir_metrics.get("per_class_AP50", {}).items():
-            all_results[cls] = {"ap": ap, "model": "nadir"}
-
-    if oblique_metrics:
-        for cls, ap in oblique_metrics.get("per_class_AP50", {}).items():
-            all_results[cls] = {"ap": ap, "model": "oblique"}
+    for m, model_name in [(nadir_metrics, "nadir"), (oblique_metrics, "oblique")]:
+        if m:
+            for cls, ap in m.get("per_class_AP50", {}).items():
+                all_results[cls] = {
+                    "ap":    ap,
+                    "prec":  m.get("per_class_precision", {}).get(cls, float("nan")),
+                    "rec":   m.get("per_class_recall",    {}).get(cls, float("nan")),
+                    "f1":    m.get("per_class_f1",        {}).get(cls, float("nan")),
+                    "model": model_name,
+                }
 
     for cls in ALL_CLASSES:
         if cls in all_results:
-            ap    = all_results[cls]["ap"]
-            model = all_results[cls]["model"]
-            if ap >= 0.5:
-                status = "[OK]"
-            elif ap >= 0.3:
-                status = "[~]"
-            else:
-                status = "[!!]"
-            print(f"   {cls:<25} {model:<10} {ap:>8.4f}  {status}")
+            d      = all_results[cls]
+            status = "[OK]" if d["ap"] >= 0.5 else ("[~]" if d["ap"] >= 0.3 else "[!!]")
+            print(f"   {cls:<25} {d['model']:<10} {d['ap']:>7.4f} {d['prec']:>7.4f} {d['rec']:>7.4f} {d['f1']:>7.4f}  {status}")
         else:
-            print(f"   {cls:<25} {'N/A':<10} {'—':>8}")
+            print(f"   {cls:<25} {'N/A':<10} {'—':>7} {'—':>7} {'—':>7} {'—':>7}")
 
     print(f"   {'-'*55}")
 
@@ -217,23 +289,51 @@ def print_combined_report(nadir_metrics, oblique_metrics, output_dir):
     for label, m in [("NADIR", nadir_metrics), ("OBLIQUE", oblique_metrics)]:
         if m:
             print(f"\n   [{label}]")
-            print(f"   mAP@50    : {m['mAP50']:.4f} ({m['mAP50'] * 100:.2f}%)")
-            print(f"   mAP@50:95 : {m['mAP50_95']:.4f}")
-            print(f"   Precision : {m['precision']:.4f}")
-            print(f"   Recall    : {m['recall']:.4f}")
+            print(f"   mAP@50              : {m['mAP50']:.4f} ({m['mAP50'] * 100:.2f}%)")
+            print(f"   mAP@50:95           : {m['mAP50_95']:.4f}")
+            print(f"   Precision           : {m['precision']:.4f}")
+            print(f"   Recall              : {m['recall']:.4f}")
+            if m.get("f1_score") is not None:
+                print(f"   F1 Score            : {m['f1_score']:.4f}")
+            if m.get("inference_ms") is not None:
+                print(f"   Vitesse Inference   : {m['inference_ms']:.2f} ms ↓")
+            if m.get("fps_gpu") is not None:
+                print(f"   FPS GPU             : {m['fps_gpu']:.1f}")
+            if m.get("params_M") is not None:
+                print(f"   Parametres          : {m['params_M']:.2f} M")
 
-    # Moyenne globale
-    all_maps = []
-    if nadir_metrics:
-        all_maps.append(nadir_metrics["mAP50"])
-    if oblique_metrics:
-        all_maps.append(oblique_metrics["mAP50"])
+    # Moyennes globales combinées
+    available = [m for m in [nadir_metrics, oblique_metrics] if m]
 
-    if all_maps:
-        mean_map = float(np.mean(all_maps))
-        print(f"\n   mAP@50 moyen (dual) : {mean_map:.4f} ({mean_map * 100:.2f}%)")
-    else:
-        mean_map = None
+    def _mean(key):
+        vals = [m[key] for m in available if m.get(key) is not None]
+        return float(np.mean(vals)) if vals else None
+
+    def _sum_inv(key):
+        """Pour les vitesses : moyenne harmonique via somme des inverses -> FPS moyen."""
+        vals = [m[key] for m in available if m.get(key) is not None and m[key] > 0]
+        return float(np.mean(vals)) if vals else None
+
+    mean_map      = _mean("mAP50")
+    mean_map95    = _mean("mAP50_95")
+    mean_prec     = _mean("precision")
+    mean_rec      = _mean("recall")
+    mean_f1       = _mean("f1_score")
+    mean_inf_ms   = _sum_inv("inference_ms")
+    mean_fps      = _sum_inv("fps_gpu")
+    mean_params   = _mean("params_M")
+
+    if mean_map is not None:
+        print(f"\n   {'Metrique combinee':<32} {'Valeur':>10}")
+        print(f"   {'-'*44}")
+        print(f"   {'mAP@50':<32} {mean_map:>10.4f}  ({mean_map*100:.2f}%)")
+        if mean_map95  is not None: print(f"   {'mAP@50:95':<32} {mean_map95:>10.4f}")
+        if mean_prec   is not None: print(f"   {'Precision':<32} {mean_prec:>10.4f}")
+        if mean_rec    is not None: print(f"   {'Recall':<32} {mean_rec:>10.4f}")
+        if mean_f1     is not None: print(f"   {'F1 Score':<32} {mean_f1:>10.4f}")
+        if mean_inf_ms is not None: print(f"   {'Vitesse Inference (ms) ↓':<32} {mean_inf_ms:>10.2f}")
+        if mean_fps    is not None: print(f"   {'FPS GPU':<32} {mean_fps:>10.1f}")
+        if mean_params is not None: print(f"   {'Parametres (M)':<32} {mean_params:>10.2f}")
 
     print("=" * 65)
 
@@ -242,7 +342,16 @@ def print_combined_report(nadir_metrics, oblique_metrics, output_dir):
         "timestamp":      datetime.now().isoformat(),
         "nadir":          nadir_metrics,
         "oblique":        oblique_metrics,
-        "combined_mAP50": mean_map,
+        "combined": {
+            "mAP50":        mean_map,
+            "mAP50_95":     mean_map95,
+            "precision":    mean_prec,
+            "recall":       mean_rec,
+            "f1_score":     mean_f1,
+            "inference_ms": mean_inf_ms,
+            "fps_gpu":      mean_fps,
+            "params_M":     mean_params,
+        },
         "per_class":      {
             cls: all_results[cls] for cls in ALL_CLASSES if cls in all_results
         },

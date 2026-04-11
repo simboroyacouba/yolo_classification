@@ -1,0 +1,8 @@
+{
+  "mode": "oblique",
+  "best_model": "C:/Users/NEBRATA/Desktop/Memoire/modeles/classification/yolo_classification/runs/detect/train3/weights/best.pt",
+  "dataset_yaml": "C:/Users/NEBRATA/Desktop/Memoire/modeles/classification/yolo_classification/runs/detect/train/oblique/dataset/dataset.yaml",
+  "classes": ["batiment_peint", "batiment_non_enduit", "batiment_enduit"],
+  "mAP50": 0.7330,
+  "mAP50_95": 0.4841
+}

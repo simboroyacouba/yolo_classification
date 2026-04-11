@@ -1,0 +1,1627 @@
+[
+  {
+    "image": "Production_2_ortho_merge_01_39.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:41:26.708758",
+    "inference_time_ms": 1768.146276473999,
+    "total_objects": 6,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 6
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.9109018445014954,
+        "bbox": [
+          388.39251708984375,
+          336.8145446777344,
+          422.8106384277344,
+          390.7081298828125
+        ]
+      },
+      {
+        "id": 1,
+        "class": "panneau_solaire",
+        "confidence": 0.9028337001800537,
+        "bbox": [
+          291.528076171875,
+          577.3709716796875,
+          325.1969909667969,
+          628.7943725585938
+        ]
+      },
+      {
+        "id": 2,
+        "class": "panneau_solaire",
+        "confidence": 0.8410892486572266,
+        "bbox": [
+          351.89215087890625,
+          577.4644775390625,
+          385.82135009765625,
+          629.0621948242188
+        ]
+      },
+      {
+        "id": 3,
+        "class": "panneau_solaire",
+        "confidence": 0.8333755135536194,
+        "bbox": [
+          358.40277099609375,
+          336.8630065917969,
+          392.0513610839844,
+          390.18780517578125
+        ]
+      },
+      {
+        "id": 4,
+        "class": "panneau_solaire",
+        "confidence": 0.8007869720458984,
+        "bbox": [
+          326.85980224609375,
+          336.841552734375,
+          362.1397705078125,
+          389.4824523925781
+        ]
+      },
+      {
+        "id": 5,
+        "class": "panneau_solaire",
+        "confidence": 0.6515170335769653,
+        "bbox": [
+          321.7720031738281,
+          576.3814697265625,
+          355.0296936035156,
+          630.374267578125
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_05_08.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:41:42.955862",
+    "inference_time_ms": 1631.67405128479,
+    "total_objects": 2,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 2
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.6973244547843933,
+        "bbox": [
+          903.0181884765625,
+          846.251953125,
+          962.4168090820312,
+          887.8455200195312
+        ]
+      },
+      {
+        "id": 1,
+        "class": "panneau_solaire",
+        "confidence": 0.6003214716911316,
+        "bbox": [
+          881.6135864257812,
+          868.1834106445312,
+          938.9826049804688,
+          906.2369995117188
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_05_30.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:42:00.759585",
+    "inference_time_ms": 1648.6716270446777,
+    "total_objects": 5,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 5
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.8545556664466858,
+        "bbox": [
+          953.9220581054688,
+          778.1038818359375,
+          989.91455078125,
+          829.8228759765625
+        ]
+      },
+      {
+        "id": 1,
+        "class": "panneau_solaire",
+        "confidence": 0.8302949070930481,
+        "bbox": [
+          992.3240356445312,
+          785.880126953125,
+          1024.0,
+          839.0467529296875
+        ]
+      },
+      {
+        "id": 2,
+        "class": "panneau_solaire",
+        "confidence": 0.7868346571922302,
+        "bbox": [
+          40.84711456298828,
+          0.0,
+          102.8261489868164,
+          35.45040512084961
+        ]
+      },
+      {
+        "id": 3,
+        "class": "panneau_solaire",
+        "confidence": 0.7425345778465271,
+        "bbox": [
+          1002.63525390625,
+          712.2278442382812,
+          1024.0,
+          749.8863525390625
+        ]
+      },
+      {
+        "id": 4,
+        "class": "panneau_solaire",
+        "confidence": 0.6966210007667542,
+        "bbox": [
+          994.0736083984375,
+          847.22412109375,
+          1024.0,
+          900.5538940429688
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_08_20.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:42:08.993740",
+    "inference_time_ms": 1647.0038890838623,
+    "total_objects": 2,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 2
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.8910803198814392,
+        "bbox": [
+          972.40087890625,
+          779.8341674804688,
+          1005.2926025390625,
+          833.0086669921875
+        ]
+      },
+      {
+        "id": 1,
+        "class": "panneau_solaire",
+        "confidence": 0.8421186208724976,
+        "bbox": [
+          1001.6002197265625,
+          777.824462890625,
+          1024.0,
+          834.1903076171875
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_10_04.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:42:15.986580",
+    "inference_time_ms": 1702.965259552002,
+    "total_objects": 13,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 13
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.9104486703872681,
+        "bbox": [
+          106.3241958618164,
+          137.21646118164062,
+          140.26124572753906,
+          182.99703979492188
+        ]
+      },
+      {
+        "id": 1,
+        "class": "panneau_solaire",
+        "confidence": 0.9072772264480591,
+        "bbox": [
+          29.477153778076172,
+          189.7261962890625,
+          64.07377624511719,
+          236.14102172851562
+        ]
+      },
+      {
+        "id": 2,
+        "class": "panneau_solaire",
+        "confidence": 0.9046146869659424,
+        "bbox": [
+          75.70945739746094,
+          138.12240600585938,
+          109.35860443115234,
+          182.76559448242188
+        ]
+      },
+      {
+        "id": 3,
+        "class": "panneau_solaire",
+        "confidence": 0.9023222327232361,
+        "bbox": [
+          31.16445541381836,
+          138.18942260742188,
+          65.19624328613281,
+          183.7151336669922
+        ]
+      },
+      {
+        "id": 4,
+        "class": "panneau_solaire",
+        "confidence": 0.8963967561721802,
+        "bbox": [
+          0.0,
+          188.68487548828125,
+          32.88668441772461,
+          235.5060577392578
+        ]
+      },
+      {
+        "id": 5,
+        "class": "panneau_solaire",
+        "confidence": 0.8802616000175476,
+        "bbox": [
+          73.86946105957031,
+          189.28611755371094,
+          107.82197570800781,
+          235.1067352294922
+        ]
+      },
+      {
+        "id": 6,
+        "class": "panneau_solaire",
+        "confidence": 0.8756564259529114,
+        "bbox": [
+          104.93846130371094,
+          189.25209045410156,
+          138.3378448486328,
+          234.9482879638672
+        ]
+      },
+      {
+        "id": 7,
+        "class": "panneau_solaire",
+        "confidence": 0.8478781580924988,
+        "bbox": [
+          149.65431213378906,
+          138.15261840820312,
+          183.43795776367188,
+          184.21243286132812
+        ]
+      },
+      {
+        "id": 8,
+        "class": "panneau_solaire",
+        "confidence": 0.8320488333702087,
+        "bbox": [
+          149.89613342285156,
+          188.62249755859375,
+          183.780029296875,
+          234.6824188232422
+        ]
+      },
+      {
+        "id": 9,
+        "class": "panneau_solaire",
+        "confidence": 0.8210473656654358,
+        "bbox": [
+          0.9651168584823608,
+          138.69137573242188,
+          34.277854919433594,
+          183.6694793701172
+        ]
+      },
+      {
+        "id": 10,
+        "class": "panneau_solaire",
+        "confidence": 0.8019822835922241,
+        "bbox": [
+          181.03089904785156,
+          188.52755737304688,
+          214.75314331054688,
+          233.46493530273438
+        ]
+      },
+      {
+        "id": 11,
+        "class": "panneau_solaire",
+        "confidence": 0.7831726670265198,
+        "bbox": [
+          180.83250427246094,
+          137.714599609375,
+          214.5579071044922,
+          183.04421997070312
+        ]
+      },
+      {
+        "id": 12,
+        "class": "panneau_solaire",
+        "confidence": 0.7396143674850464,
+        "bbox": [
+          180.9848175048828,
+          188.39407348632812,
+          213.5873565673828,
+          233.8075714111328
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_10_12.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:42:21.797683",
+    "inference_time_ms": 1550.5390167236328,
+    "total_objects": 4,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 4
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.8640003800392151,
+        "bbox": [
+          53.03942108154297,
+          764.1441040039062,
+          86.78398132324219,
+          818.2430419921875
+        ]
+      },
+      {
+        "id": 1,
+        "class": "panneau_solaire",
+        "confidence": 0.8576102256774902,
+        "bbox": [
+          53.26610565185547,
+          694.630126953125,
+          86.968994140625,
+          747.7800903320312
+        ]
+      },
+      {
+        "id": 2,
+        "class": "panneau_solaire",
+        "confidence": 0.8238206505775452,
+        "bbox": [
+          83.50849151611328,
+          763.9615478515625,
+          117.93925476074219,
+          817.2364501953125
+        ]
+      },
+      {
+        "id": 3,
+        "class": "panneau_solaire",
+        "confidence": 0.8093540072441101,
+        "bbox": [
+          83.68768310546875,
+          694.1913452148438,
+          118.34245300292969,
+          747.5685424804688
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_12_07.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:42:27.683965",
+    "inference_time_ms": 1603.7616729736328,
+    "total_objects": 2,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 2
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.8927515745162964,
+        "bbox": [
+          370.35333251953125,
+          303.44970703125,
+          427.43267822265625,
+          336.32568359375
+        ]
+      },
+      {
+        "id": 1,
+        "class": "panneau_solaire",
+        "confidence": 0.8783002495765686,
+        "bbox": [
+          370.84442138671875,
+          274.4012451171875,
+          427.4332580566406,
+          305.4183654785156
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_12_25.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:42:32.611735",
+    "inference_time_ms": 1642.9197788238525,
+    "total_objects": 1,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 1
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.890217661857605,
+        "bbox": [
+          523.5982055664062,
+          862.6300659179688,
+          578.9837646484375,
+          896.4397583007812
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_13_22.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:42:47.273968",
+    "inference_time_ms": 1596.9820022583008,
+    "total_objects": 5,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 5
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.6941726207733154,
+        "bbox": [
+          125.13594055175781,
+          516.9080810546875,
+          157.82566833496094,
+          543.8421630859375
+        ]
+      },
+      {
+        "id": 1,
+        "class": "panneau_solaire",
+        "confidence": 0.6935566067695618,
+        "bbox": [
+          185.10008239746094,
+          492.38629150390625,
+          217.92691040039062,
+          518.8978881835938
+        ]
+      },
+      {
+        "id": 2,
+        "class": "panneau_solaire",
+        "confidence": 0.6752544641494751,
+        "bbox": [
+          154.64683532714844,
+          492.33221435546875,
+          187.2729949951172,
+          518.9859619140625
+        ]
+      },
+      {
+        "id": 3,
+        "class": "panneau_solaire",
+        "confidence": 0.6317295432090759,
+        "bbox": [
+          123.59207916259766,
+          492.2708435058594,
+          157.32911682128906,
+          519.5867919921875
+        ]
+      },
+      {
+        "id": 4,
+        "class": "panneau_solaire",
+        "confidence": 0.6304489970207214,
+        "bbox": [
+          156.661376953125,
+          516.5560913085938,
+          187.89810180664062,
+          544.0040283203125
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_13_32.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:42:56.072643",
+    "inference_time_ms": 1614.6869659423828,
+    "total_objects": 12,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 12
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.8974109292030334,
+        "bbox": [
+          180.6875,
+          57.21332931518555,
+          218.42239379882812,
+          91.91641998291016
+        ]
+      },
+      {
+        "id": 1,
+        "class": "panneau_solaire",
+        "confidence": 0.8958088159561157,
+        "bbox": [
+          180.89378356933594,
+          88.79022216796875,
+          218.15139770507812,
+          124.38104248046875
+        ]
+      },
+      {
+        "id": 2,
+        "class": "panneau_solaire",
+        "confidence": 0.8863081336021423,
+        "bbox": [
+          321.7191467285156,
+          60.809173583984375,
+          359.1333312988281,
+          95.74626159667969
+        ]
+      },
+      {
+        "id": 3,
+        "class": "panneau_solaire",
+        "confidence": 0.8817314505577087,
+        "bbox": [
+          250.8028564453125,
+          57.9608039855957,
+          288.886474609375,
+          93.50627136230469
+        ]
+      },
+      {
+        "id": 4,
+        "class": "panneau_solaire",
+        "confidence": 0.8800334930419922,
+        "bbox": [
+          250.647705078125,
+          89.70921325683594,
+          288.36236572265625,
+          125.90864562988281
+        ]
+      },
+      {
+        "id": 5,
+        "class": "panneau_solaire",
+        "confidence": 0.8748995065689087,
+        "bbox": [
+          145.04437255859375,
+          57.13555908203125,
+          184.44796752929688,
+          91.68524932861328
+        ]
+      },
+      {
+        "id": 6,
+        "class": "panneau_solaire",
+        "confidence": 0.8692896962165833,
+        "bbox": [
+          145.0171661376953,
+          89.0477523803711,
+          184.09658813476562,
+          124.16264343261719
+        ]
+      },
+      {
+        "id": 7,
+        "class": "panneau_solaire",
+        "confidence": 0.8691065907478333,
+        "bbox": [
+          321.60455322265625,
+          93.16349792480469,
+          358.33648681640625,
+          128.14389038085938
+        ]
+      },
+      {
+        "id": 8,
+        "class": "panneau_solaire",
+        "confidence": 0.869072437286377,
+        "bbox": [
+          215.5528106689453,
+          57.655029296875,
+          254.7955780029297,
+          92.0145034790039
+        ]
+      },
+      {
+        "id": 9,
+        "class": "panneau_solaire",
+        "confidence": 0.8688608407974243,
+        "bbox": [
+          215.1022186279297,
+          89.22819519042969,
+          253.9863739013672,
+          124.52937316894531
+        ]
+      },
+      {
+        "id": 10,
+        "class": "panneau_solaire",
+        "confidence": 0.8687543869018555,
+        "bbox": [
+          286.5168151855469,
+          60.08417510986328,
+          324.0421142578125,
+          94.47602844238281
+        ]
+      },
+      {
+        "id": 11,
+        "class": "panneau_solaire",
+        "confidence": 0.8514197468757629,
+        "bbox": [
+          285.5137634277344,
+          91.73836517333984,
+          323.25360107421875,
+          126.40483093261719
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_13_35.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:43:01.455734",
+    "inference_time_ms": 1651.2634754180908,
+    "total_objects": 1,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 1
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.6269326210021973,
+        "bbox": [
+          224.76620483398438,
+          484.1307678222656,
+          248.5930938720703,
+          526.2244873046875
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_14_15.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:43:11.609520",
+    "inference_time_ms": 1669.814109802246,
+    "total_objects": 0,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 0
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": []
+  },
+  {
+    "image": "Production_2_ortho_merge_15_05.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:43:18.261025",
+    "inference_time_ms": 1575.6046772003174,
+    "total_objects": 0,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 0
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": []
+  },
+  {
+    "image": "Production_2_ortho_merge_16_30.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:43:30.250985",
+    "inference_time_ms": 1621.9289302825928,
+    "total_objects": 5,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 5
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.9065836071968079,
+        "bbox": [
+          465.34454345703125,
+          583.2931518554688,
+          499.958740234375,
+          637.8384399414062
+        ]
+      },
+      {
+        "id": 1,
+        "class": "panneau_solaire",
+        "confidence": 0.8881977200508118,
+        "bbox": [
+          373.98529052734375,
+          583.6320190429688,
+          408.3297119140625,
+          637.1596069335938
+        ]
+      },
+      {
+        "id": 2,
+        "class": "panneau_solaire",
+        "confidence": 0.878555178642273,
+        "bbox": [
+          405.3633117675781,
+          582.9722900390625,
+          438.4718322753906,
+          637.6661987304688
+        ]
+      },
+      {
+        "id": 3,
+        "class": "panneau_solaire",
+        "confidence": 0.8506385684013367,
+        "bbox": [
+          717.0743408203125,
+          926.4826049804688,
+          758.9818115234375,
+          967.00830078125
+        ]
+      },
+      {
+        "id": 4,
+        "class": "panneau_solaire",
+        "confidence": 0.8400047421455383,
+        "bbox": [
+          435.36474609375,
+          583.2188720703125,
+          468.74517822265625,
+          637.2730712890625
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_20_33.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:43:38.708952",
+    "inference_time_ms": 1750.7951259613037,
+    "total_objects": 2,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 2
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.7413535714149475,
+        "bbox": [
+          0.0,
+          990.5645751953125,
+          18.351116180419922,
+          1024.0
+        ]
+      },
+      {
+        "id": 1,
+        "class": "panneau_solaire",
+        "confidence": 0.6997981667518616,
+        "bbox": [
+          0.0,
+          960.7405395507812,
+          18.573400497436523,
+          993.3507690429688
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_24_29.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:43:47.031949",
+    "inference_time_ms": 1664.424180984497,
+    "total_objects": 20,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 20
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.9112871885299683,
+        "bbox": [
+          395.90411376953125,
+          166.9882049560547,
+          429.517822265625,
+          219.86734008789062
+        ]
+      },
+      {
+        "id": 1,
+        "class": "panneau_solaire",
+        "confidence": 0.9097037315368652,
+        "bbox": [
+          62.0399169921875,
+          567.4984130859375,
+          95.81541442871094,
+          620.3126220703125
+        ]
+      },
+      {
+        "id": 2,
+        "class": "panneau_solaire",
+        "confidence": 0.9016757607460022,
+        "bbox": [
+          396.08953857421875,
+          40.23622512817383,
+          429.7366638183594,
+          92.7126693725586
+        ]
+      },
+      {
+        "id": 3,
+        "class": "panneau_solaire",
+        "confidence": 0.8987520337104797,
+        "bbox": [
+          305.9530029296875,
+          168.44558715820312,
+          338.9889221191406,
+          221.31100463867188
+        ]
+      },
+      {
+        "id": 4,
+        "class": "panneau_solaire",
+        "confidence": 0.8955265879631042,
+        "bbox": [
+          396.11138916015625,
+          103.59649658203125,
+          429.072509765625,
+          156.01695251464844
+        ]
+      },
+      {
+        "id": 5,
+        "class": "panneau_solaire",
+        "confidence": 0.8805121183395386,
+        "bbox": [
+          334.77557373046875,
+          40.58172607421875,
+          368.07183837890625,
+          95.2497329711914
+        ]
+      },
+      {
+        "id": 6,
+        "class": "panneau_solaire",
+        "confidence": 0.8777052164077759,
+        "bbox": [
+          335.3082580566406,
+          104.3781509399414,
+          368.479736328125,
+          157.18124389648438
+        ]
+      },
+      {
+        "id": 7,
+        "class": "panneau_solaire",
+        "confidence": 0.8773720860481262,
+        "bbox": [
+          335.24749755859375,
+          167.4736328125,
+          368.7973937988281,
+          221.3226776123047
+        ]
+      },
+      {
+        "id": 8,
+        "class": "panneau_solaire",
+        "confidence": 0.8739427924156189,
+        "bbox": [
+          305.8861083984375,
+          106.10687255859375,
+          337.6698303222656,
+          157.68746948242188
+        ]
+      },
+      {
+        "id": 9,
+        "class": "panneau_solaire",
+        "confidence": 0.8667563796043396,
+        "bbox": [
+          304.3370056152344,
+          42.39791488647461,
+          338.00665283203125,
+          95.45603942871094
+        ]
+      },
+      {
+        "id": 10,
+        "class": "panneau_solaire",
+        "confidence": 0.8622698783874512,
+        "bbox": [
+          92.03284454345703,
+          567.994873046875,
+          126.47975158691406,
+          621.0361328125
+        ]
+      },
+      {
+        "id": 11,
+        "class": "panneau_solaire",
+        "confidence": 0.8592555522918701,
+        "bbox": [
+          152.2301788330078,
+          171.5992889404297,
+          185.8266143798828,
+          234.5224609375
+        ]
+      },
+      {
+        "id": 12,
+        "class": "panneau_solaire",
+        "confidence": 0.848232090473175,
+        "bbox": [
+          364.1988220214844,
+          0.0,
+          396.68695068359375,
+          30.180927276611328
+        ]
+      },
+      {
+        "id": 13,
+        "class": "panneau_solaire",
+        "confidence": 0.835135281085968,
+        "bbox": [
+          364.920166015625,
+          40.62651443481445,
+          399.43463134765625,
+          93.93595886230469
+        ]
+      },
+      {
+        "id": 14,
+        "class": "panneau_solaire",
+        "confidence": 0.8211233615875244,
+        "bbox": [
+          365.8499755859375,
+          103.9987564086914,
+          398.91412353515625,
+          156.45413208007812
+        ]
+      },
+      {
+        "id": 15,
+        "class": "panneau_solaire",
+        "confidence": 0.8202775716781616,
+        "bbox": [
+          29.594966888427734,
+          569.7742309570312,
+          65.66600036621094,
+          620.3016357421875
+        ]
+      },
+      {
+        "id": 16,
+        "class": "panneau_solaire",
+        "confidence": 0.8165717124938965,
+        "bbox": [
+          394.1459655761719,
+          0.0,
+          427.9623107910156,
+          27.999832153320312
+        ]
+      },
+      {
+        "id": 17,
+        "class": "panneau_solaire",
+        "confidence": 0.81538325548172,
+        "bbox": [
+          334.07293701171875,
+          0.0,
+          366.58685302734375,
+          31.07756996154785
+        ]
+      },
+      {
+        "id": 18,
+        "class": "panneau_solaire",
+        "confidence": 0.8139185905456543,
+        "bbox": [
+          365.7059326171875,
+          167.67257690429688,
+          399.31756591796875,
+          221.0156707763672
+        ]
+      },
+      {
+        "id": 19,
+        "class": "panneau_solaire",
+        "confidence": 0.8121983408927917,
+        "bbox": [
+          305.68792724609375,
+          0.0,
+          336.639892578125,
+          30.46767234802246
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_24_35.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:43:53.200790",
+    "inference_time_ms": 1588.365077972412,
+    "total_objects": 9,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 9
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.9118725061416626,
+        "bbox": [
+          36.00528335571289,
+          588.9844360351562,
+          69.40643310546875,
+          641.2205810546875
+        ]
+      },
+      {
+        "id": 1,
+        "class": "panneau_solaire",
+        "confidence": 0.9091511964797974,
+        "bbox": [
+          157.8859405517578,
+          633.7503662109375,
+          192.41812133789062,
+          686.7930908203125
+        ]
+      },
+      {
+        "id": 2,
+        "class": "panneau_solaire",
+        "confidence": 0.901147186756134,
+        "bbox": [
+          156.86741638183594,
+          584.5968627929688,
+          191.56008911132812,
+          637.4846801757812
+        ]
+      },
+      {
+        "id": 3,
+        "class": "panneau_solaire",
+        "confidence": 0.8947412371635437,
+        "bbox": [
+          127.65279388427734,
+          634.4855346679688,
+          161.032958984375,
+          686.58544921875
+        ]
+      },
+      {
+        "id": 4,
+        "class": "panneau_solaire",
+        "confidence": 0.889626145362854,
+        "bbox": [
+          126.58150482177734,
+          585.0499877929688,
+          160.41989135742188,
+          637.760498046875
+        ]
+      },
+      {
+        "id": 5,
+        "class": "panneau_solaire",
+        "confidence": 0.8812996745109558,
+        "bbox": [
+          66.8115463256836,
+          636.65283203125,
+          100.4171371459961,
+          690.4244995117188
+        ]
+      },
+      {
+        "id": 6,
+        "class": "panneau_solaire",
+        "confidence": 0.8586183190345764,
+        "bbox": [
+          65.81169128417969,
+          586.5178833007812,
+          99.13426208496094,
+          639.465576171875
+        ]
+      },
+      {
+        "id": 7,
+        "class": "panneau_solaire",
+        "confidence": 0.8240500092506409,
+        "bbox": [
+          95.89449310302734,
+          585.7049560546875,
+          130.07986450195312,
+          638.6611938476562
+        ]
+      },
+      {
+        "id": 8,
+        "class": "panneau_solaire",
+        "confidence": 0.8190520405769348,
+        "bbox": [
+          97.44660186767578,
+          635.806884765625,
+          130.81106567382812,
+          688.9230346679688
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_28_27.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:43:58.066214",
+    "inference_time_ms": 1586.7764949798584,
+    "total_objects": 12,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 12
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.919461727142334,
+        "bbox": [
+          490.09185791015625,
+          144.64297485351562,
+          524.064208984375,
+          192.79148864746094
+        ]
+      },
+      {
+        "id": 1,
+        "class": "panneau_solaire",
+        "confidence": 0.9131121635437012,
+        "bbox": [
+          707.9677124023438,
+          828.5408935546875,
+          741.6348266601562,
+          880.4304809570312
+        ]
+      },
+      {
+        "id": 2,
+        "class": "panneau_solaire",
+        "confidence": 0.9067021608352661,
+        "bbox": [
+          709.4032592773438,
+          878.2166137695312,
+          743.2598266601562,
+          929.6197509765625
+        ]
+      },
+      {
+        "id": 3,
+        "class": "panneau_solaire",
+        "confidence": 0.9040080308914185,
+        "bbox": [
+          581.1109619140625,
+          143.12313842773438,
+          614.68017578125,
+          191.11959838867188
+        ]
+      },
+      {
+        "id": 4,
+        "class": "panneau_solaire",
+        "confidence": 0.896297812461853,
+        "bbox": [
+          611.0407104492188,
+          143.56260681152344,
+          645.2828979492188,
+          190.9612579345703
+        ]
+      },
+      {
+        "id": 5,
+        "class": "panneau_solaire",
+        "confidence": 0.890282928943634,
+        "bbox": [
+          677.72314453125,
+          828.4434814453125,
+          711.06884765625,
+          880.6912231445312
+        ]
+      },
+      {
+        "id": 6,
+        "class": "panneau_solaire",
+        "confidence": 0.8868728876113892,
+        "bbox": [
+          460.0638122558594,
+          148.01748657226562,
+          493.42974853515625,
+          193.23690795898438
+        ]
+      },
+      {
+        "id": 7,
+        "class": "panneau_solaire",
+        "confidence": 0.8787174224853516,
+        "bbox": [
+          648.4285888671875,
+          878.1678466796875,
+          682.0650024414062,
+          930.4703369140625
+        ]
+      },
+      {
+        "id": 8,
+        "class": "panneau_solaire",
+        "confidence": 0.8783133029937744,
+        "bbox": [
+          520.8728637695312,
+          144.61375427246094,
+          553.7872924804688,
+          192.7728729248047
+        ]
+      },
+      {
+        "id": 9,
+        "class": "panneau_solaire",
+        "confidence": 0.8356554508209229,
+        "bbox": [
+          679.2945556640625,
+          877.6492309570312,
+          712.6497802734375,
+          929.6033935546875
+        ]
+      },
+      {
+        "id": 10,
+        "class": "panneau_solaire",
+        "confidence": 0.8354927897453308,
+        "bbox": [
+          646.0121459960938,
+          829.2452392578125,
+          681.1264038085938,
+          881.1959838867188
+        ]
+      },
+      {
+        "id": 11,
+        "class": "panneau_solaire",
+        "confidence": 0.8235781788825989,
+        "bbox": [
+          550.6566772460938,
+          144.96865844726562,
+          584.2609252929688,
+          191.1520233154297
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_31_12.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:44:03.173140",
+    "inference_time_ms": 1652.8270244598389,
+    "total_objects": 1,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 1
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.7567301392555237,
+        "bbox": [
+          827.1193237304688,
+          107.3119125366211,
+          869.2594604492188,
+          161.5937957763672
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_31_13.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:44:07.740217",
+    "inference_time_ms": 1642.5707340240479,
+    "total_objects": 1,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 1
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.8698217868804932,
+        "bbox": [
+          696.5350341796875,
+          586.7205200195312,
+          751.6002807617188,
+          618.3614501953125
+        ]
+      }
+    ]
+  },
+  {
+    "image": "Production_2_ortho_merge_33_29.png",
+    "model": "YOLO_dual_nadir",
+    "timestamp": "2026-04-09T13:44:12.237955",
+    "inference_time_ms": 870.835542678833,
+    "total_objects": 1,
+    "by_class": {
+      "panneau_solaire": {
+        "count": 1
+      },
+      "batiment_peint": {
+        "count": 0
+      },
+      "batiment_non_enduit": {
+        "count": 0
+      },
+      "batiment_enduit": {
+        "count": 0
+      }
+    },
+    "detections": [
+      {
+        "id": 0,
+        "class": "panneau_solaire",
+        "confidence": 0.822154700756073,
+        "bbox": [
+          19.082958221435547,
+          61.2662239074707,
+          53.762428283691406,
+          115.921875
+        ]
+      }
+    ]
+  }
+]
