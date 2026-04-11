@@ -1,0 +1,19 @@
+ÉVALUATION YOLO - TEST SET - 2026-03-05 15:45:17.943028
+==================================================
+
+Images testées: 41
+Modèle: runs/detect/train2/best_model.pt
+
+mAP@50: 0.9036 (90.36%)
+mAP@50:95: 0.6711
+Precision: 0.9036
+Recall: 0.6202
+F1-Score: 0.7355
+
+
+PAR CLASSE (IoU=0.5)
+--------------------------------------------------
+panneau_solaire: P=0.9236 R=0.6683 F1=0.7755
+batiment_peint: P=0.6667 R=0.2000 F1=0.3077
+batiment_non_enduit: P=0.8400 R=0.6774 F1=0.7500
+batiment_enduit: P=0.8800 R=0.4681 F1=0.6111
