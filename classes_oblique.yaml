@@ -3,6 +3,11 @@ classes:
 - batiment_peint
 - batiment_non_enduit
 - batiment_enduit
+- menuiserie_metallique
+- cloture_enduit
+- cloture_non_enduit
+- menuiserie_aluminium
+- cloture_peinte
 colors:
   batiment_enduit:
   - 255
@@ -16,7 +21,32 @@ colors:
   - 0
   - 255
   - 0
+  cloture_enduit:
+  - 255
+  - 255
+  - 0
+  cloture_non_enduit:
+  - 255
+  - 128
+  - 0
+  cloture_peinte:
+  - 0
+  - 200
+  - 100
+  menuiserie_aluminium:
+  - 0
+  - 128
+  - 128
+  menuiserie_metallique:
+  - 128
+  - 0
+  - 128
 descriptions:
   batiment_enduit: Dalle beton / toit plat (vue oblique)
   batiment_non_enduit: Tuiles ou beton non enduit (vue oblique)
   batiment_peint: Tole bac acier (vue oblique)
+  cloture_enduit: Cloture enduite (vue oblique)
+  cloture_non_enduit: Cloture non enduite (vue oblique)
+  cloture_peinte: Cloture peinte (vue oblique)
+  menuiserie_aluminium: Menuiserie en aluminium (vue oblique)
+  menuiserie_metallique: Menuiserie en metal (vue oblique)

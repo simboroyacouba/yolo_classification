@@ -2,7 +2,9 @@
 Split du dataset COCO en sous-datasets nadir et oblique.
 
   instances_nadir.json   : Production_*.png -> panneau_solaire UNIQUEMENT
-  instances_oblique.json : Snapshot_*.jpg   -> batiment_peint, batiment_non_enduit, batiment_enduit
+  instances_oblique.json : Snapshot_*.jpg   -> batiment_peint, batiment_non_enduit, batiment_enduit,
+                                               menuiserie_metallique, menuiserie_aluminium,
+                                               cloture_enduit, cloture_non_enduit, cloture_peinte
   classes_nadir.yaml     : fichier classes YOLO pour le modele nadir
   classes_oblique.yaml   : fichier classes YOLO pour le modele oblique
 
@@ -32,20 +34,34 @@ NADIR_PREFIX   = "Production_"
 OBLIQUE_PREFIX = "Snapshot_"
 
 NADIR_CLASSES   = ["panneau_solaire"]
-OBLIQUE_CLASSES = ["batiment_peint", "batiment_non_enduit", "batiment_enduit"]
+OBLIQUE_CLASSES = [
+    "batiment_peint", "batiment_non_enduit", "batiment_enduit",
+    "menuiserie_metallique", "menuiserie_aluminium",
+    "cloture_enduit", "cloture_non_enduit", "cloture_peinte",
+]
 
 COLORS = {
-    "panneau_solaire":     [255, 0,   0],
-    "batiment_peint":      [0,   255, 0],
-    "batiment_non_enduit": [0,   0,   255],
-    "batiment_enduit":     [255, 165, 0],
+    "panneau_solaire":       [255, 0,   0],
+    "batiment_peint":        [0,   255, 0],
+    "batiment_non_enduit":   [0,   0,   255],
+    "batiment_enduit":       [255, 165, 0],
+    "menuiserie_metallique": [128, 0,   128],
+    "menuiserie_aluminium":  [0,   128, 128],
+    "cloture_enduit":        [255, 255, 0],
+    "cloture_non_enduit":    [255, 128, 0],
+    "cloture_peinte":        [0,   200, 100],
 }
 
 DESCRIPTIONS = {
-    "panneau_solaire":     "Tole ondulee metallique (vue nadir)",
-    "batiment_peint":      "Tole bac acier (vue oblique)",
-    "batiment_non_enduit": "Tuiles ou beton non enduit (vue oblique)",
-    "batiment_enduit":     "Dalle beton / toit plat (vue oblique)",
+    "panneau_solaire":       "Tole ondulee metallique (vue nadir)",
+    "batiment_peint":        "Tole bac acier (vue oblique)",
+    "batiment_non_enduit":   "Tuiles ou beton non enduit (vue oblique)",
+    "batiment_enduit":       "Dalle beton / toit plat (vue oblique)",
+    "menuiserie_metallique": "Menuiserie en metal (vue oblique)",
+    "menuiserie_aluminium":  "Menuiserie en aluminium (vue oblique)",
+    "cloture_enduit":        "Cloture enduite (vue oblique)",
+    "cloture_non_enduit":    "Cloture non enduite (vue oblique)",
+    "cloture_peinte":        "Cloture peinte (vue oblique)",
 }
 
 

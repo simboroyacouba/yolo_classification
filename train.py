@@ -51,16 +51,30 @@ except ImportError:
 # Classes selon le mode
 MODE_CLASSES = {
     "nadir":   ["panneau_solaire"],
-    "oblique": ["batiment_peint", "batiment_non_enduit", "batiment_enduit"],
-    "all":     ["panneau_solaire", "batiment_peint", "batiment_non_enduit", "batiment_enduit"],
+    "oblique": [
+        "batiment_peint", "batiment_non_enduit", "batiment_enduit",
+        "menuiserie_metallique", "menuiserie_aluminium",
+        "cloture_enduit", "cloture_non_enduit", "cloture_peinte",
+    ],
+    "all":     [
+        "panneau_solaire",
+        "batiment_peint", "batiment_non_enduit", "batiment_enduit",
+        "menuiserie_metallique", "menuiserie_aluminium",
+        "cloture_enduit", "cloture_non_enduit", "cloture_peinte",
+    ],
 }
 
 # Poids d'oversampling pour le mode oblique
 # panneau_solaire retire du modele oblique (P=0.40, gere par le modele nadir)
 OVERSAMPLE_WEIGHTS_OBLIQUE = {
-    "batiment_peint":     5,
-    "batiment_enduit":    3,    # 2.5 arrondi a l'entier superieur
-    "batiment_non_enduit": 2,
+    "batiment_peint":       5,
+    "batiment_enduit":      3,    # 2.5 arrondi a l'entier superieur
+    "batiment_non_enduit":  2,
+    "menuiserie_metallique": 3,
+    "menuiserie_aluminium":  3,
+    "cloture_enduit":        2,
+    "cloture_non_enduit":    2,
+    "cloture_peinte":        3,
 }
 
 
