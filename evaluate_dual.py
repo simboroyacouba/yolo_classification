@@ -87,16 +87,31 @@ def find_model_and_data(mode, output_base=None):
                         print(f"   [{mode}] scan -> {model_path}")
                         break
 
-    # 3. Parcourir runs/detect/ puis data/*/runs/detect/ (chemins absolus)
+    # 3. Parcourir runs/detect/ en filtrant par mode (nadir ou oblique dans le chemin)
     if not model_path:
         script_dir = Path(__file__).parent
         for glob_pattern in ["runs/detect/*/weights/best.pt",
                              "data/*/runs/detect/*/weights/best.pt"]:
-            candidates = sorted(script_dir.glob(glob_pattern))
+            # Filtrer les chemins contenant le nom du mode pour eviter
+            # que le mode nadir ne charge le modele oblique (ou vice versa)
+            candidates = [
+                p for p in sorted(script_dir.glob(glob_pattern))
+                if mode in str(p).lower()
+            ]
             if candidates:
-                model_path = str(candidates[-1])  # train la plus recente
-                print(f"   [{mode}] runs -> {model_path}")
+                model_path = str(candidates[-1])
+                print(f"   [{mode}] runs (filtre {mode}) -> {model_path}")
                 break
+
+        # Fallback final : dernier modele disponible (avec avertissement)
+        if not model_path:
+            for glob_pattern in ["runs/detect/*/weights/best.pt",
+                                 "data/*/runs/detect/*/weights/best.pt"]:
+                candidates = sorted(script_dir.glob(glob_pattern))
+                if candidates:
+                    model_path = str(candidates[-1])
+                    print(f"   [{mode}] AVERTISSEMENT : modele sans filtre mode -> {model_path}")
+                    break
 
     # 4. dataset.yaml — chercher dans output/{mode}/ puis output/ puis data/*/output/
     if not data_yaml:
@@ -106,11 +121,26 @@ def find_model_and_data(mode, output_base=None):
 
     if not data_yaml:
         script_dir = Path(__file__).parent
+        # Chercher un dataset.yaml dans un chemin contenant le nom du mode
+        for glob_pattern in ["output/*/dataset/dataset.yaml",
+                             "data/*/output/*/dataset/dataset.yaml"]:
+            candidates = [
+                p for p in sorted(script_dir.glob(glob_pattern))
+                if mode in str(p).lower()
+            ]
+            if candidates:
+                data_yaml = str(candidates[-1])
+                break
+
+    # Fallback : dataset.yaml generique (non specifique au mode)
+    if not data_yaml:
+        script_dir = Path(__file__).parent
         for glob_pattern in ["output/dataset/dataset.yaml",
                              "data/*/output/dataset/dataset.yaml"]:
             candidates = sorted(script_dir.glob(glob_pattern))
             if candidates:
                 data_yaml = str(candidates[-1])
+                print(f"   [{mode}] AVERTISSEMENT : dataset.yaml generique -> {data_yaml}")
                 break
 
     return model_path, data_yaml
