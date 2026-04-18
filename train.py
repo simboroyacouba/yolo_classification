@@ -37,6 +37,8 @@ import csv
 import warnings
 warnings.filterwarnings("ignore")
 
+from attention import CBAM
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -76,6 +78,160 @@ OVERSAMPLE_WEIGHTS_OBLIQUE = {
     "cloture_non_enduit":    2,
     "cloture_peinte":        3,
 }
+
+
+# =============================================================================
+# CBAM — ENREGISTREMENT ET CONSTRUCTION DU YAML CUSTOM
+# =============================================================================
+
+def _register_cbam():
+    """Enregistre CBAM dans ultralytics.nn.modules pour le parsing YAML."""
+    import ultralytics.nn.modules as _ulm
+    setattr(_ulm, "CBAM", CBAM)
+
+
+def _get_layer_out_channels(layer, width_multiple, max_channels):
+    """Retourne le nombre de canaux de sortie d'une couche YAML."""
+    args = layer[3] if len(layer) > 3 else []
+    if isinstance(args, list) and args and isinstance(args[0], int):
+        return min(max(round(args[0] * width_multiple), 1), max_channels)
+    return None
+
+
+def _find_cbam_positions(backbone):
+    """
+    Detecte les indices de backbone apres lesquels inserer un CBAM.
+    Regles :
+      - Apres chaque bloc C3k2 / C2f / C3 suivi d'un Conv stride-2 (fin de niveau P)
+      - Apres le bloc SPPF (fin du backbone)
+    """
+    positions = []
+    attention_blocks = {"C3k2", "C2f", "C3", "C3x", "C3TR", "BottleneckCSP"}
+
+    for i, layer in enumerate(backbone):
+        module = layer[2] if len(layer) > 2 else ""
+        if module == "SPPF":
+            positions.append(i)
+        elif module in attention_blocks and i + 1 < len(backbone):
+            nxt = backbone[i + 1]
+            nxt_module = nxt[2] if len(nxt) > 2 else ""
+            nxt_args   = nxt[3] if len(nxt) > 3 else []
+            # Conv stride-2 = transition vers un niveau plus profond
+            if nxt_module == "Conv" and isinstance(nxt_args, list) and len(nxt_args) >= 3 and nxt_args[2] == 2:
+                positions.append(i)
+
+    return positions
+
+
+def build_cbam_yaml(model_version, model_size, output_dir):
+    """
+    Genere un YAML Ultralytics avec des blocs CBAM inseres dans le backbone.
+    Retourne le chemin du fichier YAML genere.
+    """
+    import ultralytics
+
+    pkg    = Path(ultralytics.__file__).parent
+    ver    = model_version.replace("yolo", "")   # "26" depuis "yolo26"
+
+    candidates = [
+        pkg / "cfg" / "models" / ver / f"{model_version}.yaml",
+        pkg / "cfg" / "models" / f"v{ver}" / f"{model_version}.yaml",
+        pkg / "models" / ver / f"{model_version}.yaml",
+    ]
+    base_yaml_path = next((p for p in candidates if p.exists()), None)
+    if base_yaml_path is None:
+        raise FileNotFoundError(
+            f"YAML de base introuvable pour {model_version}.\n"
+            f"Chemins essayes : {[str(c) for c in candidates]}"
+        )
+
+    with open(base_yaml_path, encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+
+    # Parametres d'echelle
+    scales         = cfg.get("scales", {})
+    scale          = scales.get(model_size, [1.0, 1.0, 1024])
+    depth_mult     = scale[0]
+    width_mult     = scale[1]
+    max_ch         = scale[2] if len(scale) > 2 else 1024
+
+    backbone = cfg.get("backbone", [])
+    head     = cfg.get("head",     [])
+    n_bb_orig = len(backbone)
+
+    insert_at = _find_cbam_positions(backbone)
+    if not insert_at:
+        print("   Avertissement — aucun point d'insertion CBAM detecte dans le backbone.")
+        return None
+
+    print(f"   Points d'insertion CBAM : couches backbone {insert_at}")
+
+    # ----- Construire le nouveau backbone -----
+    new_backbone = []
+    # cbam_shifts[orig_idx] = nouvel indice absolu apres insertion
+    # Si CBAM insere apres orig_idx, pointe sur le CBAM (pas sur la couche elle-meme)
+    cbam_shifts = {}
+    shift = 0
+
+    for orig_idx, layer in enumerate(backbone):
+        new_abs = orig_idx + shift
+        new_backbone.append(layer)
+
+        if orig_idx in insert_at:
+            c_out = _get_layer_out_channels(layer, width_mult, max_ch)
+            if c_out is None:
+                # Fallback : garder meme nb de canaux que l'entree
+                c_out = 256
+            new_backbone.append([-1, 1, "CBAM", [c_out]])
+            cbam_shifts[orig_idx] = new_abs + 1   # reference = sortie du CBAM
+            shift += 1
+        else:
+            cbam_shifts[orig_idx] = new_abs
+
+    n_inserted = shift   # nombre de CBAM ajoutes
+
+    # ----- Mettre a jour les references dans le head -----
+    def _update_ref(r):
+        if not isinstance(r, int) or r < 0:
+            return r
+        if r < n_bb_orig:
+            return cbam_shifts[r]      # reference vers le backbone
+        return r + n_inserted          # reference vers le head
+
+    new_head = []
+    for layer in head:
+        f = layer[0]
+        new_f = [_update_ref(x) for x in f] if isinstance(f, list) else _update_ref(f)
+        new_head.append([new_f] + layer[1:])
+
+    cfg["backbone"] = new_backbone
+    cfg["head"]     = new_head
+
+    os.makedirs(output_dir, exist_ok=True)
+    out_path = os.path.join(output_dir, f"{model_version}{model_size}_cbam.yaml")
+    with open(out_path, "w", encoding="utf-8") as f:
+        yaml.dump(cfg, f, default_flow_style=None, allow_unicode=True)
+
+    print(f"   YAML CBAM genere : {out_path}  ({n_inserted} blocs CBAM)")
+    return out_path
+
+
+def _load_pretrained_partial(model, pretrained_path):
+    """
+    Charge les poids pre-entraines en ignorant les couches CBAM
+    (absent du checkpoint officiel).
+    """
+    ckpt = torch.load(pretrained_path, map_location="cpu", weights_only=False)
+    src  = ckpt.get("model", ckpt)
+    if hasattr(src, "state_dict"):
+        src = src.float().state_dict()
+
+    dst      = model.model.state_dict()
+    filtered = {k: v for k, v in src.items()
+                if k in dst and v.shape == dst[k].shape}
+    dst.update(filtered)
+    model.model.load_state_dict(dst)
+    print(f"   Poids pre-entraines : {len(filtered)}/{len(dst)} couches chargees")
 
 
 # =============================================================================
@@ -129,7 +285,7 @@ def build_config(args):
         "annotations_file": annotations_file,
         "classes_file":     classes_file,
         "output_dir":       output_dir,
-        "model_version":    os.getenv("YOLO_VERSION", "yolo11"),
+        "model_version":    os.getenv("YOLO_VERSION", "yolo26"),
         "model_size":       os.getenv("YOLO_SIZE", "n"),
         "num_epochs":       int(os.getenv("NUM_EPOCHS", "25")),
         "batch_size":       int(os.getenv("BATCH_SIZE", "2")),
@@ -142,6 +298,7 @@ def build_config(args):
         "test_split":       float(os.getenv("TEST_SPLIT", "0.10")),
         "save_every":       5,
         "freeze_epochs":    args.freeze_epochs,
+        "use_attention":    getattr(args, "attention", "none"),
         "classes":          None,  # rempli apres chargement du YAML
     }
 
@@ -629,6 +786,7 @@ def train_yolo(config):
     print(f"   Epochs        : {config['num_epochs']}  Batch : {config['batch_size']}  LR : {config['learning_rate']}")
     print(f"   Freeze epochs : {config['freeze_epochs']}")
     print(f"   LR schedule   : CosineAnnealingLR")
+    print(f"   Attention     : {config.get('use_attention', 'none').upper()}")
 
     if not os.path.exists(config["annotations_file"]):
         raise FileNotFoundError(
@@ -650,10 +808,30 @@ def train_yolo(config):
     )
 
     model_name = f"{config['model_version']}{config['model_size']}.pt"
-    print(f"\n🧠 Chargement : {model_name}")
+    use_cbam   = config.get("use_attention", "none") == "cbam"
 
     gc.collect()
-    model = YOLO(model_name)
+
+    if use_cbam:
+        print(f"\n🧠 Chargement avec CBAM : {model_name}")
+        _register_cbam()
+        cbam_yaml_path = build_cbam_yaml(
+            config["model_version"], config["model_size"], config["output_dir"]
+        )
+        if cbam_yaml_path is None:
+            print("   Fallback : CBAM desactive (aucun point d'insertion detecte)")
+            model = YOLO(model_name)
+            use_cbam = False
+        else:
+            model = YOLO(cbam_yaml_path)
+            pretrained = model_name
+            if os.path.exists(pretrained):
+                _load_pretrained_partial(model, pretrained)
+            else:
+                print(f"   Poids pre-entraines {pretrained} non trouves — entrainement from scratch")
+    else:
+        print(f"\n🧠 Chargement : {model_name}")
+        model = YOLO(model_name)
 
     # -------------------------------------------------------------------
     # Callbacks
@@ -844,6 +1022,7 @@ def train_yolo(config):
         f.write(f"Classes      : {classes}\n")
         f.write(f"Epochs       : {config['num_epochs']}  Batch : {config['batch_size']}\n")
         f.write(f"LR schedule  : CosineAnnealingLR (cos_lr=True)\n")
+        f.write(f"Attention    : {config.get('use_attention', 'none').upper()}\n")
         f.write(f"Freeze       : {config['freeze_epochs']} epochs\n\n")
         f.write(f"mAP@50       : {best['mAP50']:.4f}\n")
         f.write(f"mAP@50:95    : {best['mAP50_95']:.4f}\n")
@@ -887,6 +1066,12 @@ def main():
             "Nombre d'epochs avec backbone gele (staged training). "
             "0 = pas de staged training."
         ),
+    )
+    parser.add_argument(
+        "--attention",
+        choices=["none", "cbam"],
+        default="none",
+        help="Mecanisme d'attention a integrer dans le backbone (default: none).",
     )
     args = parser.parse_args()
 
