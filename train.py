@@ -290,8 +290,8 @@ def build_config(args):
         "num_epochs":       int(os.getenv("NUM_EPOCHS", "25")),
         "batch_size":       int(os.getenv("BATCH_SIZE", "2")),
         "learning_rate":    float(os.getenv("LEARNING_RATE", "0.005")),
-        "momentum":         0.9,
-        "weight_decay":     0.0005,
+        "momentum":         float(os.getenv("MOMENTUM",     "0.8784")),
+        "weight_decay":     float(os.getenv("WEIGHT_DECAY", "0.00001")),
         "image_size":       int(os.getenv("IMAGE_SIZE", "640")),
         "train_split":      float(os.getenv("TRAIN_SPLIT", "0.70")),
         "val_split":        float(os.getenv("VAL_SPLIT", "0.20")),
@@ -873,17 +873,13 @@ def train_yolo(config):
         weight_decay=config["weight_decay"],
         # ---- CosineAnnealingLR (remplace StepLR trop agressif) ----
         cos_lr=True,
-        # ---- Augmentations ----
-        fliplr=0.5,          # Flip horizontal (p=0.5)
-        flipud=0.5,          # Flip vertical   (p=0.5)
-        # Rotation 180° uniquement : flipud + fliplr ensemble = ~180°
-        # degrees=0 evite les rotations 90°/270° invalides en oblique
+        # ---- Augmentations (calibrees par Optuna) ----
+        fliplr=0.0,          # Desactive : nuit aux images obliques (Optuna trial #19)
+        flipud=0.5,
         degrees=0.0,
-        # ColorJitter
-        hsv_h=0.05,          # Hue       ≈ hue=0.05
-        hsv_s=0.2,           # Saturation≈ saturation=0.2
-        hsv_v=0.3,           # Value     ≈ brightness=0.3
-        # Pas de mosaic/mixup sur petit dataset
+        hsv_h=0.05,
+        hsv_s=0.162,         # 0.2 → 0.162 (Optuna)
+        hsv_v=0.113,         # 0.3 → 0.113 (Optuna)
         mosaic=0.0,
         mixup=0.0,
         # ---- Staged training ----
