@@ -42,9 +42,7 @@ from train import (
     load_classes,
     prepare_yolo_dataset,
     make_staged_training_callback,
-    _register_cbam,
-    build_cbam_yaml,
-    _load_pretrained_partial,
+    _inject_cbam_post_load,
 )
 
 
@@ -89,16 +87,11 @@ def make_objective(base_config, yaml_path):
             torch.cuda.empty_cache()
 
         # --- Charger le modele ---
+        model = YOLO(model_name)
         if use_cbam:
-            _register_cbam()
-            cbam_yaml = build_cbam_yaml(
-                base_config["model_version"], base_config["model_size"], trial_dir
+            _inject_cbam_post_load(
+                model, base_config["model_version"], base_config["model_size"]
             )
-            model = YOLO(cbam_yaml) if cbam_yaml else YOLO(model_name)
-            if cbam_yaml and os.path.exists(model_name):
-                _load_pretrained_partial(model, model_name)
-        else:
-            model = YOLO(model_name)
 
         # --- Callback de pruning ---
         best_map50 = [0.0]

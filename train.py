@@ -84,10 +84,94 @@ OVERSAMPLE_WEIGHTS_OBLIQUE = {
 # CBAM — ENREGISTREMENT ET CONSTRUCTION DU YAML CUSTOM
 # =============================================================================
 
-def _register_cbam():
-    """Enregistre CBAM dans ultralytics.nn.modules pour le parsing YAML."""
-    import ultralytics.nn.modules as _ulm
-    setattr(_ulm, "CBAM", CBAM)
+class _CBAMWrapper(nn.Module):
+    """
+    Enveloppe une couche YOLO avec un bloc CBAM.
+    Preserve les attributs .i, .f, .type necessaires au forward pass de DetectionModel.
+    """
+    def __init__(self, layer, cbam):
+        super().__init__()
+        self.layer = layer
+        self.cbam  = cbam
+        self.i    = getattr(layer, "i",    -1)
+        self.f    = getattr(layer, "f",    -1)
+        self.type = getattr(layer, "type", type(layer).__name__) + "+CBAM"
+        self.np   = sum(p.numel() for p in self.parameters())
+
+    def forward(self, x):
+        return self.cbam(self.layer(x))
+
+
+def _inject_cbam_post_load(model, model_version, model_size):
+    """
+    Injecte CBAM directement dans le modele charge, sans modifier le YAML
+    ni dependance au parseur Ultralytics (contournement du KeyError globals()).
+
+    Strategie : enveloppe les couches backbone cibles avec _CBAMWrapper.
+    Les poids pre-entraines sont deja charges (YOLO(model_name)).
+    Seuls les blocs CBAM sont initialises aleatoirement.
+    """
+    import ultralytics
+
+    ver = model_version.replace("yolo", "")
+    pkg = Path(ultralytics.__file__).parent
+
+    candidates = [
+        pkg / "cfg" / "models" / ver / f"{model_version}.yaml",
+        pkg / "cfg" / "models" / f"v{ver}" / f"{model_version}.yaml",
+    ]
+    base_yaml_path = next((p for p in candidates if p.exists()), None)
+    if base_yaml_path is None:
+        print("   Avertissement : YAML de base non trouve — CBAM non injecte")
+        return model
+
+    with open(base_yaml_path, encoding="utf-8") as f:
+        cfg = yaml.safe_load(f)
+
+    insert_at = _find_cbam_positions(cfg.get("backbone", []))
+    if not insert_at:
+        print("   Avertissement : aucun point d'insertion detecte — CBAM non injecte")
+        return model
+
+    print(f"   Points d'insertion CBAM : couches backbone {insert_at}")
+
+    layers   = model.model.model
+    injected = 0
+
+    for idx in insert_at:
+        # Trouver la cle dans _modules (peut etre str(idx) ou indexe par .i)
+        target_key = None
+        for key, m in layers._modules.items():
+            if key == str(idx) or getattr(m, "i", None) == idx:
+                target_key = key
+                break
+
+        if target_key is None:
+            print(f"   Avertissement : layer {idx} non trouve dans le modele")
+            continue
+
+        layer = layers._modules[target_key]
+
+        # Detecter les canaux de sortie depuis les modules internes
+        c_out = None
+        for m in reversed(list(layer.modules())):
+            if isinstance(m, nn.BatchNorm2d):
+                c_out = m.num_features
+                break
+            if isinstance(m, nn.Conv2d):
+                c_out = m.out_channels
+                break
+
+        if c_out is None:
+            print(f"   Avertissement : canaux non detectes pour layer {idx}")
+            continue
+
+        cbam_block = CBAM(c_out)
+        layers._modules[target_key] = _CBAMWrapper(layer, cbam_block)
+        injected += 1
+
+    print(f"   {injected} blocs CBAM injectes (poids backbone pre-entraines conserves)")
+    return model
 
 
 def _get_layer_out_channels(layer, width_multiple, max_channels):
@@ -813,22 +897,9 @@ def train_yolo(config):
     gc.collect()
 
     if use_cbam:
-        print(f"\n🧠 Chargement avec CBAM : {model_name}")
-        _register_cbam()
-        cbam_yaml_path = build_cbam_yaml(
-            config["model_version"], config["model_size"], config["output_dir"]
-        )
-        if cbam_yaml_path is None:
-            print("   Fallback : CBAM desactive (aucun point d'insertion detecte)")
-            model = YOLO(model_name)
-            use_cbam = False
-        else:
-            model = YOLO(cbam_yaml_path)
-            pretrained = model_name
-            if os.path.exists(pretrained):
-                _load_pretrained_partial(model, pretrained)
-            else:
-                print(f"   Poids pre-entraines {pretrained} non trouves — entrainement from scratch")
+        print(f"\n🧠 Chargement avec CBAM (post-load) : {model_name}")
+        model = YOLO(model_name)   # poids pre-entraines charges normalement
+        _inject_cbam_post_load(model, config["model_version"], config["model_size"])
     else:
         print(f"\n🧠 Chargement : {model_name}")
         model = YOLO(model_name)

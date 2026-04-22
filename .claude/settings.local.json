@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
-      "Bash(conda run *)"
+      "Bash(conda run *)",
+      "Bash(C:\\\\Users\\\\NEBRATA\\\\anaconda3\\\\envs\\\\maskrcnn\\\\python.exe -c \"import ast; ast.parse\\(open\\('train.py'\\).read\\(\\)\\); ast.parse\\(open\\('tune.py'\\).read\\(\\)\\); print\\('Syntaxe OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('train.py'\\).read\\(\\)\\); ast.parse\\(open\\('tune.py'\\).read\\(\\)\\); print\\('Syntaxe OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('train.py', encoding='utf-8'\\).read\\(\\)\\); ast.parse\\(open\\('tune.py', encoding='utf-8'\\).read\\(\\)\\); print\\('Syntaxe OK'\\)\")"
     ]
   }
 }
