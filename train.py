@@ -33,6 +33,7 @@ from datetime import datetime
 import time
 import gc
 import torch
+import torch.nn as nn
 import csv
 import warnings
 warnings.filterwarnings("ignore")
