@@ -50,17 +50,19 @@ from train import (
 # ESPACE DE RECHERCHE
 # =============================================================================
 
-def _suggest_hparams(trial):
+def _suggest_hparams(trial, use_cbam=False):
     """Definit l'espace de recherche des hyperparametres."""
-    return {
-        "lr0":           trial.suggest_float("lr0",          1e-4, 1e-2, log=True),
-        "weight_decay":  trial.suggest_float("weight_decay", 1e-5, 1e-3, log=True),
-        "momentum":      trial.suggest_float("momentum",     0.85, 0.98),
-        "hsv_s":         trial.suggest_float("hsv_s",        0.1,  0.6),
-        "hsv_v":         trial.suggest_float("hsv_v",        0.1,  0.5),
-        "fliplr":        trial.suggest_float("fliplr",       0.0,  0.7),
-        "freeze_epochs": trial.suggest_categorical("freeze_epochs", [0, 3, 5, 10]),
+    hp = {
+        "lr0":          trial.suggest_float("lr0",          1e-4, 1e-2, log=True),
+        "weight_decay": trial.suggest_float("weight_decay", 1e-5, 1e-3, log=True),
+        "momentum":     trial.suggest_float("momentum",     0.85, 0.98),
+        "hsv_s":        trial.suggest_float("hsv_s",        0.1,  0.6),
+        "hsv_v":        trial.suggest_float("hsv_v",        0.1,  0.5),
+        "fliplr":       trial.suggest_float("fliplr",       0.0,  0.7),
+        # CBAM blocks are randomly initialized — staged freeze would prevent them from learning
+        "freeze_epochs": 0 if use_cbam else trial.suggest_categorical("freeze_epochs", [0, 3, 5, 10]),
     }
+    return hp
 
 
 # =============================================================================
@@ -74,7 +76,7 @@ def make_objective(base_config, yaml_path):
     """
 
     def objective(trial):
-        hp = _suggest_hparams(trial)
+        hp = _suggest_hparams(trial, use_cbam=base_config.get("use_attention", "none") == "cbam")
 
         trial_dir  = os.path.join(base_config["tune_dir"], f"trial_{trial.number:03d}")
         os.makedirs(trial_dir, exist_ok=True)
@@ -109,6 +111,9 @@ def make_objective(base_config, yaml_path):
         model.add_callback("on_fit_epoch_end", pruning_cb)
 
         freeze_n = hp["freeze_epochs"]
+        # CBAM: force freeze_epochs=0 so randomly-init CBAM blocks train from the start
+        if use_cbam:
+            freeze_n = 0
         if freeze_n > 0:
             model.add_callback(
                 "on_train_epoch_start",

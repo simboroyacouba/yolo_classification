@@ -371,7 +371,7 @@ def build_config(args):
         "classes_file":     classes_file,
         "output_dir":       output_dir,
         "model_version":    os.getenv("YOLO_VERSION", "yolo26"),
-        "model_size":       os.getenv("YOLO_SIZE", "n"),
+        "model_size":       os.getenv("YOLO_SIZE", "l"),
         "num_epochs":       int(os.getenv("NUM_EPOCHS", "25")),
         "batch_size":       int(os.getenv("BATCH_SIZE", "2")),
         "learning_rate":    float(os.getenv("LEARNING_RATE", "0.005")),
@@ -697,9 +697,16 @@ def make_staged_training_callback(freeze_epochs):
     """
     Callback qui degele le backbone a l'epoch `freeze_epochs`
     et reduit le LR d'un facteur 5 pour la phase de fine-tuning.
+    Les blocs CBAM (poids aleatoires) sont toujours entrainables des le debut.
     """
 
     def on_train_epoch_start(trainer):
+        # CBAM blocks must always be trainable — unfreeze them at epoch 0
+        if trainer.epoch == 0:
+            for name, v in trainer.model.named_parameters():
+                if "cbam" in name.lower():
+                    v.requires_grad = True
+
         if trainer.epoch == freeze_epochs:
             for _, v in trainer.model.named_parameters():
                 v.requires_grad = True
