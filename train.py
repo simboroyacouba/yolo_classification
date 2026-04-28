@@ -70,14 +70,14 @@ MODE_CLASSES = {
 # Poids d'oversampling pour le mode oblique
 # panneau_solaire retire du modele oblique (P=0.40, gere par le modele nadir)
 OVERSAMPLE_WEIGHTS_OBLIQUE = {
-    "batiment_peint":       5,
-    "batiment_enduit":      3,    # 2.5 arrondi a l'entier superieur
-    "batiment_non_enduit":  2,
-    "menuiserie_metallique": 3,
-    "menuiserie_aluminium":  3,
-    "cloture_enduit":        2,
-    "cloture_non_enduit":    2,
-    "cloture_peinte":        3,
+    "batiment_peint":       1,
+    "batiment_enduit":      1,
+    "batiment_non_enduit":  1,
+    "menuiserie_metallique": 1,
+    "menuiserie_aluminium":  1,
+    "cloture_enduit":        1,
+    "cloture_non_enduit":    1,
+    "cloture_peinte":        1,
 }
 
 
@@ -953,13 +953,13 @@ def train_yolo(config):
         weight_decay=config["weight_decay"],
         # ---- CosineAnnealingLR (remplace StepLR trop agressif) ----
         cos_lr=True,
-        # ---- Augmentations (calibrees par Optuna) ----
-        fliplr=0.0,          # Desactive : nuit aux images obliques (Optuna trial #19)
-        flipud=0.5,
+        # ---- Augmentations (toutes desactivees) ----
+        fliplr=0.0,
+        flipud=0.0,
         degrees=0.0,
-        hsv_h=0.05,
-        hsv_s=0.162,         # 0.2 → 0.162 (Optuna)
-        hsv_v=0.113,         # 0.3 → 0.113 (Optuna)
+        hsv_h=0.0,
+        hsv_s=0.0,
+        hsv_v=0.0,
         mosaic=0.0,
         mixup=0.0,
         # ---- Staged training ----
