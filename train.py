@@ -947,6 +947,7 @@ def train_yolo(config):
         epochs=config["num_epochs"],
         batch=config["batch_size"],
         imgsz=config["image_size"],
+        optimizer="SGD",
         lr0=config["learning_rate"],
         momentum=config["momentum"],
         weight_decay=config["weight_decay"],
