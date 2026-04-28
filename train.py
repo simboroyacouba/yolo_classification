@@ -371,7 +371,7 @@ def build_config(args):
         "classes_file":     classes_file,
         "output_dir":       output_dir,
         "model_version":    os.getenv("YOLO_VERSION", "yolo26"),
-        "model_size":       os.getenv("YOLO_SIZE", "s"),
+        "model_size":       os.getenv("YOLO_SIZE", "l"),
         "num_epochs":       int(os.getenv("NUM_EPOCHS", "25")),
         "batch_size":       int(os.getenv("BATCH_SIZE", "2")),
         "learning_rate":    float(os.getenv("LEARNING_RATE", "0.005")),
