@@ -56,12 +56,12 @@ MODE_CLASSES = {
     "nadir":   ["panneau_solaire"],
     "oblique": [
         "batiment_peint", "batiment_non_enduit", "batiment_enduit",
-        "menuiserie_metallique", "menuiserie_aluminium",
+        "menuiserie_metallique",
     ],
     "all":     [
         "panneau_solaire",
         "batiment_peint", "batiment_non_enduit", "batiment_enduit",
-        "menuiserie_metallique", "menuiserie_aluminium",
+        "menuiserie_metallique",
     ],
 }
 
@@ -72,7 +72,6 @@ OVERSAMPLE_WEIGHTS_OBLIQUE = {
     "batiment_enduit":       1,
     "batiment_non_enduit":   2,
     "menuiserie_metallique": 1,
-    "menuiserie_aluminium":  10,
 }
 
 
