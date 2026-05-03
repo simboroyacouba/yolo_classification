@@ -67,19 +67,19 @@ MODE_CLASSES = {
 
 # Poids d'oversampling pour le mode oblique
 # panneau_solaire retire du modele oblique (P=0.40, gere par le modele nadir)
-# OVERSAMPLE_WEIGHTS_OBLIQUE = {
-#     "batiment_peint":        1,
-#     "batiment_enduit":       1,
-#     "batiment_non_enduit":   1,
-#     "menuiserie_metallique": 1,
-# }
-
 OVERSAMPLE_WEIGHTS_OBLIQUE = {
-    "batiment_peint":        4,
+    "batiment_peint":        1,
     "batiment_enduit":       1,
-    "batiment_non_enduit":   2,
+    "batiment_non_enduit":   1,
     "menuiserie_metallique": 1,
 }
+
+# OVERSAMPLE_WEIGHTS_OBLIQUE = {
+#     "batiment_peint":        4,
+#     "batiment_enduit":       1,
+#     "batiment_non_enduit":   2,
+#     "menuiserie_metallique": 1,
+# }
 
 
 # =============================================================================
