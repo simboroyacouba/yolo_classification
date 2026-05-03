@@ -591,6 +591,11 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
     stats = {
         "train": 0, "val": 0, "test": 0, "annotations": 0,
         "per_class": {c: 0 for c in classes},
+        "ann_per_split": {"train": 0, "val": 0, "test": 0},
+        "per_class_per_split": {
+            split: {c: 0 for c in classes}
+            for split in ("train", "val", "test")
+        },
     }
 
     for split_name, (img_ids, img_dir, lbl_dir) in splits_map.items():
@@ -624,8 +629,10 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
                     )
                     f.write(f"{class_id} {' '.join(f'{v:.6f}' for v in yolo_bbox)}\n")
                     stats["annotations"] += 1
+                    stats["ann_per_split"][split_name] += 1
                     if class_id < len(classes):
                         stats["per_class"][classes[class_id]] += 1
+                        stats["per_class_per_split"][split_name][classes[class_id]] += 1
 
             stats[split_name] += 1
 
@@ -686,28 +693,57 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
             indent=2,
         )
 
-    print(f"\n   Annotations  : {stats['annotations']}")
-    post_os = stats.get("per_class_after_oversampling")
-    max_count = max(
-        max(stats['per_class'].values()) if stats['per_class'] else 1,
-        max(post_os.values()) if post_os else 1,
-    )
-    header = f"      {'Classe':<30} {'Total':>7}  {'Train OS':>8}"
-    print(f"   Distribution par classe (Total = train+val+test / Train OS = apres oversampling) :")
-    print(header)
-    print(f"      {'-'*57}")
-    for cls_name, count in stats['per_class'].items():
-        after = post_os[cls_name] if post_os else count
-        bar_before = "█" * int(count / max_count * 15)
-        bar_after  = "█" * int(after / max_count * 15)
-        print(f"      {cls_name:<30} {count:>7}  {after:>8}  {bar_before} → {bar_after}")
-    print(f"   Dataset      : {dataset_dir}")
+    post_os    = stats.get("per_class_after_oversampling")
+    has_os     = post_os is not None
+
+    # --- Repartition images et annotations par split ---
+    total_imgs    = stats["train"] + stats["val"] + stats["test"]
+    train_imgs_os = len(list(Path(dirs["train_img"]).glob("*.*")))
+    print(f"\n   {'':=<60}")
+    print(f"   REPARTITION DU DATASET")
+    print(f"   {'':=<60}")
+    if has_os:
+        print(f"   {'Split':<10} {'Images':>8}  {'Apres OS':>9}  {'Annotations':>12}")
+        print(f"   {'-'*45}")
+        print(f"   {'Train':<10} {stats['train']:>8}  {train_imgs_os:>9}  {stats['ann_per_split']['train']:>12}")
+    else:
+        print(f"   {'Split':<10} {'Images':>8}  {'Annotations':>12}")
+        print(f"   {'-'*34}")
+        print(f"   {'Train':<10} {stats['train']:>8}  {stats['ann_per_split']['train']:>12}")
+    print(f"   {'Val':<10} {stats['val']:>8}  {stats['val']:>9}  {stats['ann_per_split']['val']:>12}" if has_os
+          else f"   {'Val':<10} {stats['val']:>8}  {stats['ann_per_split']['val']:>12}")
+    print(f"   {'Test':<10} {stats['test']:>8}  {stats['test']:>9}  {stats['ann_per_split']['test']:>12}" if has_os
+          else f"   {'Test':<10} {stats['test']:>8}  {stats['ann_per_split']['test']:>12}")
+    print(f"   {'-'*45}" if has_os else f"   {'-'*34}")
+    print(f"   {'Total':<10} {total_imgs:>8}  {'-':>9}  {stats['annotations']:>12}" if has_os
+          else f"   {'Total':<10} {total_imgs:>8}  {stats['annotations']:>12}")
+
+    # --- Distribution par classe par split ---
+    if has_os:
+        print(f"\n   {'Classe':<30} {'Train':>7}  {'Train OS':>9}  {'Val':>6}  {'Test':>6}")
+        print(f"   {'-'*65}")
+        for cls_name in stats['per_class']:
+            tr    = stats['per_class_per_split']['train'][cls_name]
+            tr_os = post_os[cls_name]
+            va    = stats['per_class_per_split']['val'][cls_name]
+            te    = stats['per_class_per_split']['test'][cls_name]
+            print(f"   {cls_name:<30} {tr:>7}  {tr_os:>9}  {va:>6}  {te:>6}")
+    else:
+        print(f"\n   {'Classe':<30} {'Train':>7}  {'Val':>6}  {'Test':>6}")
+        print(f"   {'-'*53}")
+        for cls_name in stats['per_class']:
+            tr = stats['per_class_per_split']['train'][cls_name]
+            va = stats['per_class_per_split']['val'][cls_name]
+            te = stats['per_class_per_split']['test'][cls_name]
+            print(f"   {cls_name:<30} {tr:>7}  {va:>6}  {te:>6}")
+
     print(f"\n   Augmentations actives :")
     print(f"      flipud  = 0.5   (flip vertical)")
     print(f"      hsv_h   = 0.05  (teinte)")
     print(f"      hsv_s   = 0.162 (saturation)")
     print(f"      hsv_v   = 0.113 (luminosite)")
     print(f"      fliplr  = 0.0   (flip horizontal desactive — images obliques)")
+    print(f"   Dataset      : {dataset_dir}")
 
     return yaml_path, stats
 
