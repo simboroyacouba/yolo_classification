@@ -40,6 +40,8 @@ try:
 except ImportError:
     pass
 
+from model_finder import find_model_and_data as _find_model_and_data
+
 
 # =============================================================================
 # CONSTANTES
@@ -72,52 +74,12 @@ IMG_EXTS = {".jpg", ".jpeg", ".png", ".tif", ".tiff"}
 
 def find_model(mode, output_base=None):
     """Trouver automatiquement le meilleur modele pour un mode donne."""
-
-    script_dir = Path(__file__).parent
-    if output_base is None:
-        output_base = str(script_dir / "output")
-
-    # 1. Lire model_info_{mode}.json genere par train.py
-    info_path = os.path.join(output_base, f"model_info_{mode}.json")
-    if os.path.exists(info_path):
-        with open(info_path) as f:
-            info = json.load(f)
-        best = info.get("best_model")
-        if best and os.path.exists(best):
-            print(f"   [{mode}] model_info.json -> {best}")
-            return best
-
-    # 2. Parcourir output/{mode}/ puis output/
-    for base in [os.path.join(output_base, mode), output_base]:
-        if not os.path.exists(base):
-            continue
-        for root, dirs, files in os.walk(base):
-            if "weights" in dirs:
-                pt = os.path.join(root, "weights", "best.pt")
-                if os.path.exists(pt):
-                    print(f"   [{mode}] scan -> {pt}")
-                    return pt
-
-    # 3. Chercher dans runs/detect/ (chemin absolu depuis le script)
-    script_dir = Path(__file__).parent
-    runs_dir = script_dir / "runs" / "detect"
-    if runs_dir.exists():
-        folders = sorted(
-            [f for f in runs_dir.iterdir() if f.is_dir() and f.name.startswith("train")],
-            key=lambda x: int(x.name.replace("train", "") or "0"),
-        )
-        for folder in reversed(folders):
-            pt = folder / "weights" / "best.pt"
-            if pt.exists():
-                print(f"   [{mode}] runs/detect -> {pt}")
-                return str(pt)
-
-    # 4. Chercher dans data/*/runs/detect/ (modeles importes / Kaggle)
-    for pt_path in sorted(script_dir.glob("data/*/runs/detect/*/weights/best.pt")):
-        print(f"   [{mode}] data/runs -> {pt_path}")
-        return str(pt_path)
-
-    return None
+    try:
+        model_path, _ = _find_model_and_data(mode, output_base)
+        return model_path
+    except FileNotFoundError as e:
+        print(e)
+        return None
 
 
 def load_classes_from_yaml(yaml_path):

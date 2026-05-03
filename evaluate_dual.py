@@ -31,6 +31,8 @@ try:
 except ImportError:
     pass
 
+from model_finder import find_model_and_data
+
 
 # =============================================================================
 # CONSTANTES
@@ -49,100 +51,7 @@ COLORS_MAP = {
 }
 
 
-# =============================================================================
-# DECOUVERTE AUTOMATIQUE
-# =============================================================================
-
-def find_model_and_data(mode, output_base=None):
-    """Trouver le chemin du modele et du dataset.yaml pour un mode donne."""
-
-    script_dir = Path(__file__).parent
-    if output_base is None:
-        output_base = str(script_dir / "output")
-
-    model_path = None
-    data_yaml  = None
-
-    # 1. model_info_{mode}.json genere par train.py
-    info_path = os.path.join(output_base, f"model_info_{mode}.json")
-    if os.path.exists(info_path):
-        with open(info_path) as f:
-            info = json.load(f)
-        candidate  = info.get("best_model")
-        data_yaml  = info.get("dataset_yaml")
-        if candidate and os.path.exists(candidate):
-            model_path = candidate
-            print(f"   [{mode}] model_info.json -> {model_path}")
-
-    # 2. Parcourir output/{mode}/
-    if not model_path:
-        base_dir = os.path.join(output_base, mode)
-        if os.path.exists(base_dir):
-            for root, dirs, files in os.walk(base_dir):
-                if "weights" in dirs:
-                    pt = os.path.join(root, "weights", "best.pt")
-                    if os.path.exists(pt):
-                        model_path = pt
-                        print(f"   [{mode}] scan -> {model_path}")
-                        break
-
-    # 3. Parcourir runs/detect/ en filtrant par mode (nadir ou oblique dans le chemin)
-    if not model_path:
-        script_dir = Path(__file__).parent
-        for glob_pattern in ["runs/detect/*/weights/best.pt",
-                             "data/*/runs/detect/*/weights/best.pt"]:
-            # Filtrer les chemins contenant le nom du mode pour eviter
-            # que le mode nadir ne charge le modele oblique (ou vice versa)
-            candidates = [
-                p for p in sorted(script_dir.glob(glob_pattern))
-                if mode in str(p).lower()
-            ]
-            if candidates:
-                model_path = str(candidates[-1])
-                print(f"   [{mode}] runs (filtre {mode}) -> {model_path}")
-                break
-
-        # Fallback final : dernier modele disponible (avec avertissement)
-        if not model_path:
-            for glob_pattern in ["runs/detect/*/weights/best.pt",
-                                 "data/*/runs/detect/*/weights/best.pt"]:
-                candidates = sorted(script_dir.glob(glob_pattern))
-                if candidates:
-                    model_path = str(candidates[-1])
-                    print(f"   [{mode}] AVERTISSEMENT : modele sans filtre mode -> {model_path}")
-                    break
-
-    # 4. dataset.yaml — chercher dans output/{mode}/ puis output/ puis data/*/output/
-    if not data_yaml:
-        yaml_candidate = os.path.join(output_base, mode, "dataset", "dataset.yaml")
-        if os.path.exists(yaml_candidate):
-            data_yaml = yaml_candidate
-
-    if not data_yaml:
-        script_dir = Path(__file__).parent
-        # Chercher un dataset.yaml dans un chemin contenant le nom du mode
-        for glob_pattern in ["output/*/dataset/dataset.yaml",
-                             "data/*/output/*/dataset/dataset.yaml"]:
-            candidates = [
-                p for p in sorted(script_dir.glob(glob_pattern))
-                if mode in str(p).lower()
-            ]
-            if candidates:
-                data_yaml = str(candidates[-1])
-                break
-
-    # Fallback : dataset.yaml generique (non specifique au mode)
-    if not data_yaml:
-        script_dir = Path(__file__).parent
-        for glob_pattern in ["output/dataset/dataset.yaml",
-                             "data/*/output/dataset/dataset.yaml"]:
-            candidates = sorted(script_dir.glob(glob_pattern))
-            if candidates:
-                data_yaml = str(candidates[-1])
-                print(f"   [{mode}] AVERTISSEMENT : dataset.yaml generique -> {data_yaml}")
-                break
-
-    return model_path, data_yaml
+# find_model_and_data est importe depuis model_finder.py
 
 
 # =============================================================================
@@ -541,32 +450,38 @@ def main():
     # -------------------------------------------------------------------
 
     if not args.skip_nadir:
-        nadir_model_path, nadir_yaml = find_model_and_data("nadir", output_base)
-
+        try:
+            nadir_model_path, nadir_yaml = find_model_and_data("nadir", output_base)
+        except FileNotFoundError as e:
+            print(e)
+            nadir_model_path, nadir_yaml = None, None
         if args.nadir_model:
             nadir_model_path = args.nadir_model
         if args.nadir_data:
             nadir_yaml = args.nadir_data
-
-        nadir_metrics = evaluate_model(
-            nadir_model_path, nadir_yaml, "nadir", args.output_dir
-        )
+        if nadir_model_path:
+            nadir_metrics = evaluate_model(
+                nadir_model_path, nadir_yaml, "nadir", args.output_dir
+            )
 
     # -------------------------------------------------------------------
     # Evaluation oblique
     # -------------------------------------------------------------------
 
     if not args.skip_oblique:
-        oblique_model_path, oblique_yaml = find_model_and_data("oblique", output_base)
-
+        try:
+            oblique_model_path, oblique_yaml = find_model_and_data("oblique", output_base)
+        except FileNotFoundError as e:
+            print(e)
+            oblique_model_path, oblique_yaml = None, None
         if args.oblique_model:
             oblique_model_path = args.oblique_model
         if args.oblique_data:
             oblique_yaml = args.oblique_data
-
-        oblique_metrics = evaluate_model(
-            oblique_model_path, oblique_yaml, "oblique", args.output_dir
-        )
+        if oblique_model_path:
+            oblique_metrics = evaluate_model(
+                oblique_model_path, oblique_yaml, "oblique", args.output_dir
+            )
 
     # -------------------------------------------------------------------
     # Rapport combine et graphiques

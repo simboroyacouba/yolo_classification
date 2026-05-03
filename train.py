@@ -1022,6 +1022,9 @@ def train_yolo(config):
         mixup=0.0,
         # ---- Staged training ----
         freeze=freeze_n_layers if config["freeze_epochs"] > 0 else 0,
+        # ---- Dossier de sortie (contient le mode pour que evaluate_dual.py trouve le bon modele) ----
+        project=os.path.join("runs", "detect", mode),
+        name="train",
         # ---- Divers ----
         seed=42,
         verbose=True,
