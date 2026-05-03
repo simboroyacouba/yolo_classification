@@ -57,27 +57,22 @@ MODE_CLASSES = {
     "oblique": [
         "batiment_peint", "batiment_non_enduit", "batiment_enduit",
         "menuiserie_metallique", "menuiserie_aluminium",
-        "cloture_enduit", "cloture_non_enduit", "cloture_peinte",
     ],
     "all":     [
         "panneau_solaire",
         "batiment_peint", "batiment_non_enduit", "batiment_enduit",
         "menuiserie_metallique", "menuiserie_aluminium",
-        "cloture_enduit", "cloture_non_enduit", "cloture_peinte",
     ],
 }
 
 # Poids d'oversampling pour le mode oblique
 # panneau_solaire retire du modele oblique (P=0.40, gere par le modele nadir)
 OVERSAMPLE_WEIGHTS_OBLIQUE = {
-    "batiment_peint":       1,
-    "batiment_enduit":      1,
-    "batiment_non_enduit":  1,
-    "menuiserie_metallique": 1,
-    "menuiserie_aluminium":  1,
-    "cloture_enduit":        1,
-    "cloture_non_enduit":    1,
-    "cloture_peinte":        1,
+    "batiment_peint":        5,
+    "batiment_enduit":       3,
+    "batiment_non_enduit":   2,
+    "menuiserie_metallique": 3,
+    "menuiserie_aluminium":  3,
 }
 
 
@@ -650,6 +645,16 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
         stats["oversampling_copies"] = n_copies
         print(f"   + {n_copies} copies ajoutees au train set")
 
+        # Compter les annotations par classe apres oversampling
+        post_os = {c: 0 for c in classes}
+        for lbl_file in Path(dirs["train_lbl"]).glob("*.txt"):
+            with open(lbl_file) as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if parts and int(parts[0]) < len(classes):
+                        post_os[classes[int(parts[0])]] += 1
+        stats["per_class_after_oversampling"] = post_os
+
     # -------------------------------------------------------------------
     # dataset.yaml
     # -------------------------------------------------------------------
@@ -683,8 +688,27 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
         )
 
     print(f"\n   Annotations  : {stats['annotations']}")
-    print(f"   Par classe   : {stats['per_class']}")
+    post_os = stats.get("per_class_after_oversampling")
+    max_count = max(
+        max(stats['per_class'].values()) if stats['per_class'] else 1,
+        max(post_os.values()) if post_os else 1,
+    )
+    header = f"      {'Classe':<30} {'Avant':>7}  {'Apres OS':>8}"
+    print(f"   Distribution par classe :")
+    print(header)
+    print(f"      {'-'*55}")
+    for cls_name, count in stats['per_class'].items():
+        after = post_os[cls_name] if post_os else count
+        bar_before = "█" * int(count / max_count * 15)
+        bar_after  = "█" * int(after / max_count * 15)
+        print(f"      {cls_name:<30} {count:>7}  {after:>8}  {bar_before} → {bar_after}")
     print(f"   Dataset      : {dataset_dir}")
+    print(f"\n   Augmentations actives :")
+    print(f"      flipud  = 0.5   (flip vertical)")
+    print(f"      hsv_h   = 0.05  (teinte)")
+    print(f"      hsv_s   = 0.162 (saturation)")
+    print(f"      hsv_v   = 0.113 (luminosite)")
+    print(f"      fliplr  = 0.0   (flip horizontal desactive — images obliques)")
 
     return yaml_path, stats
 
@@ -953,13 +977,13 @@ def train_yolo(config):
         weight_decay=config["weight_decay"],
         # ---- CosineAnnealingLR (remplace StepLR trop agressif) ----
         cos_lr=True,
-        # ---- Augmentations (toutes desactivees) ----
+        # ---- Augmentations (calibrees par Optuna) ----
         fliplr=0.0,
-        flipud=0.0,
+        flipud=0.5,
         degrees=0.0,
-        hsv_h=0.0,
-        hsv_s=0.0,
-        hsv_v=0.0,
+        hsv_h=0.05,
+        hsv_s=0.162,
+        hsv_v=0.113,
         mosaic=0.0,
         mixup=0.0,
         # ---- Staged training ----
