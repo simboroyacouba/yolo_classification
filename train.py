@@ -68,11 +68,11 @@ MODE_CLASSES = {
 # Poids d'oversampling pour le mode oblique
 # panneau_solaire retire du modele oblique (P=0.40, gere par le modele nadir)
 OVERSAMPLE_WEIGHTS_OBLIQUE = {
-    "batiment_peint":        5,
-    "batiment_enduit":       3,
+    "batiment_peint":        4,
+    "batiment_enduit":       1,
     "batiment_non_enduit":   2,
-    "menuiserie_metallique": 3,
-    "menuiserie_aluminium":  3,
+    "menuiserie_metallique": 1,
+    "menuiserie_aluminium":  10,
 }
 
 
@@ -635,9 +635,8 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
 
     if mode == "oblique":
         print("\n   Oversampling (oblique) :")
-        print(f"      batiment_peint     x{OVERSAMPLE_WEIGHTS_OBLIQUE['batiment_peint']}")
-        print(f"      batiment_enduit    x{OVERSAMPLE_WEIGHTS_OBLIQUE['batiment_enduit']}")
-        print(f"      batiment_non_enduit x{OVERSAMPLE_WEIGHTS_OBLIQUE['batiment_non_enduit']}")
+        for cls_name, w in OVERSAMPLE_WEIGHTS_OBLIQUE.items():
+            print(f"      {cls_name:<30} x{w}")
         n_copies = oversample_train_set(
             dirs["train_img"], dirs["train_lbl"],
             classes, OVERSAMPLE_WEIGHTS_OBLIQUE,
@@ -693,8 +692,8 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
         max(stats['per_class'].values()) if stats['per_class'] else 1,
         max(post_os.values()) if post_os else 1,
     )
-    header = f"      {'Classe':<30} {'Avant OS':>8}  {'Apres OS':>8}"
-    print(f"   Distribution par classe (train set) :")
+    header = f"      {'Classe':<30} {'Total':>7}  {'Train OS':>8}"
+    print(f"   Distribution par classe (Total = train+val+test / Train OS = apres oversampling) :")
     print(header)
     print(f"      {'-'*57}")
     for cls_name, count in stats['per_class'].items():
