@@ -39,8 +39,7 @@ except ImportError:
 NADIR_CLASSES   = ["panneau_solaire"]
 OBLIQUE_CLASSES = [
     "batiment_peint", "batiment_non_enduit", "batiment_enduit",
-    "menuiserie_metallique", "menuiserie_aluminium",
-    "cloture_enduit", "cloture_non_enduit", "cloture_peinte",
+    "menuiserie_metallique",
 ]
 ALL_CLASSES     = NADIR_CLASSES + OBLIQUE_CLASSES
 
