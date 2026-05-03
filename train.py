@@ -693,10 +693,10 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
         max(stats['per_class'].values()) if stats['per_class'] else 1,
         max(post_os.values()) if post_os else 1,
     )
-    header = f"      {'Classe':<30} {'Avant':>7}  {'Apres OS':>8}"
-    print(f"   Distribution par classe :")
+    header = f"      {'Classe':<30} {'Avant OS':>8}  {'Apres OS':>8}"
+    print(f"   Distribution par classe (train set) :")
     print(header)
-    print(f"      {'-'*55}")
+    print(f"      {'-'*57}")
     for cls_name, count in stats['per_class'].items():
         after = post_os[cls_name] if post_os else count
         bar_before = "█" * int(count / max_count * 15)
