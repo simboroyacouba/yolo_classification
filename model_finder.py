@@ -45,21 +45,20 @@ def find_model_and_data(mode, output_base=None, script_dir=None):
             data_yaml = yaml_cand
 
     # ------------------------------------------------------------------
-    # 2. runs/detect/{mode}/train* (nouvelle convention project/name)
+    # 2. Chercher tout best.pt dans un chemin contenant le mode
+    #    Couvre : {mode}/train/, runs/detect/{mode}/train/,
+    #             runs/detect/runs/detect/{mode}/train/, etc.
     # ------------------------------------------------------------------
     if not model_path:
-        runs_mode = script_dir / "runs" / "detect" / mode
-        if runs_mode.exists():
-            candidates = sorted(
-                [f for f in runs_mode.iterdir() if f.is_dir()],
-                key=lambda x: x.stat().st_mtime,
-            )
-            for folder in reversed(candidates):
-                pt = folder / "weights" / "best.pt"
-                if pt.exists():
-                    model_path = str(pt)
-                    print(f"   [{mode}] runs/detect/{mode}/ -> {model_path}")
-                    break
+        all_pts = sorted(
+            script_dir.rglob("best.pt"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        for pt in reversed(all_pts):
+            if mode in str(pt).lower():
+                model_path = str(pt)
+                print(f"   [{mode}] trouve -> {model_path}")
+                break
 
     # ------------------------------------------------------------------
     # 3. output/{mode}/best_model.pt copie par train.py
@@ -71,19 +70,23 @@ def find_model_and_data(mode, output_base=None, script_dir=None):
             print(f"   [{mode}] output/{mode}/ -> {model_path}")
 
     # ------------------------------------------------------------------
-    # Dataset yaml — output/{mode}/dataset/dataset.yaml
+    # Dataset yaml — chercher tout dataset.yaml contenant le mode dans le chemin
     # ------------------------------------------------------------------
     if not data_yaml:
         yaml_candidate = Path(output_base) / mode / "dataset" / "dataset.yaml"
         if yaml_candidate.exists():
             data_yaml = str(yaml_candidate)
 
-    # Chercher dans runs/detect/{mode}/train*/
-    if not data_yaml and model_path:
-        train_dir = Path(model_path).parent.parent
-        yaml_candidate = train_dir / "dataset" / "dataset.yaml"
-        if yaml_candidate.exists():
-            data_yaml = str(yaml_candidate)
+    if not data_yaml:
+        all_yamls = sorted(
+            script_dir.rglob("dataset.yaml"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        for y in reversed(all_yamls):
+            if mode in str(y).lower():
+                data_yaml = str(y)
+                print(f"   [{mode}] dataset.yaml -> {data_yaml}")
+                break
 
     # ------------------------------------------------------------------
     # Erreur explicite — pas de fallback vers un mauvais modele
@@ -101,5 +104,18 @@ def find_model_and_data(mode, output_base=None, script_dir=None):
             f"Relancez : python train.py --mode {mode}\n"
             f"Ou passez le chemin manuellement : --{mode}-data chemin/vers/dataset.yaml"
         )
+
+    # Patcher le path du yaml si absolu (ex: chemin Kaggle utilise localement)
+    if data_yaml:
+        import yaml as _yaml
+        with open(data_yaml) as f:
+            cfg = _yaml.safe_load(f)
+        yaml_dir = str(Path(data_yaml).parent)
+        stored_path = str(cfg.get("path", "."))
+        if not Path(stored_path).exists() or stored_path == ".":
+            cfg["path"] = yaml_dir
+            with open(data_yaml, "w") as f:
+                _yaml.dump(cfg, f, default_flow_style=False)
+            print(f"   [{mode}] dataset.yaml patche : path -> {yaml_dir}")
 
     return model_path, data_yaml

@@ -668,7 +668,7 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
     with open(yaml_path, "w") as f:
         yaml.dump(
             {
-                "path":  os.path.abspath(dataset_dir),
+                "path":  ".",
                 "train": "images/train",
                 "val":   "images/val",
                 "test":  "images/test",
@@ -1023,7 +1023,7 @@ def train_yolo(config):
         # ---- Staged training ----
         freeze=freeze_n_layers if config["freeze_epochs"] > 0 else 0,
         # ---- Dossier de sortie (contient le mode pour que evaluate_dual.py trouve le bon modele) ----
-        project=os.path.join("runs", "detect", mode),
+        project=mode,
         name="train",
         # ---- Divers ----
         seed=42,

@@ -53,9 +53,9 @@ OBLIQUE_PREFIX = "Snapshot_"
 # Seuils de confiance par classe
 CLASS_THRESHOLDS = {
     "panneau_solaire":     0.60,
-    "batiment_peint":      0.70,
-    "batiment_non_enduit": 0.55,
-    "batiment_enduit":     0.65,
+    "batiment_peint":      0.30,
+    "batiment_non_enduit": 0.35,
+    "batiment_enduit":     0.35,
 }
 
 COLORS = {
@@ -358,7 +358,7 @@ def main():
             "both    : appliquer les deux modeles avec fusion NMS"
         ),
     )
-    parser.add_argument("--no-display", action="store_true", help="Ne pas afficher les images")
+    parser.add_argument("--display", action="store_true", help="Afficher les images dans une fenetre")
     args = parser.parse_args()
 
     output_base = os.getenv("OUTPUT_DIR", "./output")
@@ -430,10 +430,18 @@ def main():
     start_total = time.time()
 
     for idx, img_path in enumerate(images, 1):
-        print(f"[{idx}/{len(images)}] {img_path.name}")
-
-        image    = Image.open(str(img_path)).convert("RGB")
         img_type = detect_image_type(img_path.name)
+
+        # Filtrer : nadir ne traite que Production_*, oblique que Snapshot_*
+        if args.mode == "nadir" and img_type != "nadir":
+            print(f"[{idx}/{len(images)}] {img_path.name} — ignoree (pas Production_*)")
+            continue
+        if args.mode == "oblique" and img_type != "oblique":
+            print(f"[{idx}/{len(images)}] {img_path.name} — ignoree (pas Snapshot_*)")
+            continue
+
+        print(f"[{idx}/{len(images)}] {img_path.name}")
+        image = Image.open(str(img_path)).convert("RGB")
 
         # Determiner quel(s) modele(s) utiliser
         if args.mode == "auto":
@@ -483,7 +491,7 @@ def main():
         # Visualisation
         out_img   = os.path.join(args.output, f"{img_path.stem}_dual.png")
         title_sfx = f" [{img_type} -> {model_used}]"
-        visualize(image, preds, out_img, show=not args.no_display, title_suffix=title_sfx)
+        visualize(image, preds, out_img, show=args.display, title_suffix=title_sfx)
 
         # Rapport
         report = generate_report(preds, img_path.name, model_used)
