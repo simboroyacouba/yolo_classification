@@ -9,6 +9,7 @@ classes:
   - batiment_peint      # index 2 (COCO category id: 2)
   - batiment_non_enduit         # index 3 (COCO category id: 3)
   - batiment_enduit         # index 4 (COCO category id: 4)
+  - menuiserie_metallique
 
 # Couleurs pour la visualisation (RGB)
 colors:
