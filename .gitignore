@@ -1,6 +1,7 @@
 output/
 evaluation/
 predictions/
+predictions_01/
 runs/
 data/
 *.pt
