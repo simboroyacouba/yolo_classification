@@ -48,10 +48,10 @@ except ImportError:
 
 # Poids d'oversampling par classe (1 = pas de copie supplementaire)
 OVERSAMPLE_WEIGHTS = {
-    "panneau_solaire":       1,
+    "panneau_solaire":       4,
     "batiment_peint":        1,
     "batiment_enduit":       1,
-    "batiment_non_enduit":   1,
+    "batiment_non_enduit":   2,
     "menuiserie_metallique": 1,
 }
 
