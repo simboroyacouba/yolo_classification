@@ -2,24 +2,27 @@
 Entrainement YOLO dual - nadir (panneau_solaire) / oblique (batiments)
 
 Architecture duale :
-  - Modele nadir   : entraine sur Production_*.png, classe panneau_solaire
-  - Modele oblique : entraine sur Snapshot_*.jpg,   classes batiment_*
+  - Mode nadir   : classe panneau_solaire   (instances_nadir.json)
+  - Mode oblique : classes batiment_*        (instances_oblique.json)
+  - Mode dual    : nadir puis oblique sequentiellement
 
 Ameliorations vs version initiale :
   - Augmentations : flipH, flipV, ColorJitter, CosineAnnealingLR
-  - Oversampling  : batiment_peint x5, batiment_enduit x3, batiment_non_enduit x2
+  - Oversampling  : pilote par --aug CLASS:COEFF (remplace dict hardcode)
   - Staged training : geler backbone N epochs puis degeler avec LR/5
   - AP@50 par classe a chaque epoch et apres entrainement
+  - CBAM : injection post-load (backbone pre-entraine conserve)
 
 Usage :
-  python train.py --mode nadir
-  python train.py --mode oblique
-  python train.py --mode oblique --freeze-epochs 5
-  python train.py --mode all
-  python train.py --mode oblique --freeze-epochs 5 --images-dir ../dataset1/images/default
+  python train.py --mode simple
+  python train.py --mode attention --cbam-reduction 16
+  python train.py --mode optimize --n-trials 20
+  python train.py --mode dual --aug panneau_solaire:3 batiment_peint:2
+  python train.py --mode dual --freeze-epochs 5
 """
 
 import os
+import copy
 import json
 import yaml
 import shutil
@@ -51,35 +54,20 @@ except ImportError:
 # CONSTANTES
 # =============================================================================
 
-# Classes selon le mode
 MODE_CLASSES = {
     "nadir":   ["panneau_solaire"],
     "oblique": [
         "batiment_peint", "batiment_non_enduit", "batiment_enduit",
         "menuiserie_metallique",
     ],
-    "all":     [
-        "panneau_solaire",
-        "batiment_peint", "batiment_non_enduit", "batiment_enduit",
-        "menuiserie_metallique",
-    ],
 }
 
-# Poids d'oversampling pour le mode oblique
-# panneau_solaire retire du modele oblique (P=0.40, gere par le modele nadir)
-OVERSAMPLE_WEIGHTS_OBLIQUE = {
-    "batiment_peint":        1,
-    "batiment_enduit":       1,
-    "batiment_non_enduit":   1,
-    "menuiserie_metallique": 1,
+OPTUNA_CONFIG = {
+    "n_trials":           20,
+    "n_epochs_per_trial": 5,
+    "study_name":         "yolo_cadastral",
+    "output_dir":         "./optuna_output",
 }
-
-# OVERSAMPLE_WEIGHTS_OBLIQUE = {
-#     "batiment_peint":        4,
-#     "batiment_enduit":       1,
-#     "batiment_non_enduit":   2,
-#     "menuiserie_metallique": 1,
-# }
 
 
 # =============================================================================
@@ -90,6 +78,7 @@ class _CBAMWrapper(nn.Module):
     """
     Enveloppe une couche YOLO avec un bloc CBAM.
     Preserve les attributs .i, .f, .type necessaires au forward pass de DetectionModel.
+    Classe au niveau module (picklable).
     """
     def __init__(self, layer, cbam):
         super().__init__()
@@ -104,14 +93,12 @@ class _CBAMWrapper(nn.Module):
         return self.cbam(self.layer(x))
 
 
-def _inject_cbam_post_load(model, model_version, model_size):
+def _inject_cbam_post_load(model, model_version, model_size,
+                            cbam_reduction=16, cbam_kernel_size=7):
     """
-    Injecte CBAM directement dans le modele charge, sans modifier le YAML
-    ni dependance au parseur Ultralytics (contournement du KeyError globals()).
-
+    Injecte CBAM directement dans le modele charge, sans modifier le YAML.
     Strategie : enveloppe les couches backbone cibles avec _CBAMWrapper.
-    Les poids pre-entraines sont deja charges (YOLO(model_name)).
-    Seuls les blocs CBAM sont initialises aleatoirement.
+    Les poids pre-entraines sont conserves ; seuls les blocs CBAM sont nouveaux.
     """
     import ultralytics
 
@@ -141,7 +128,6 @@ def _inject_cbam_post_load(model, model_version, model_size):
     injected = 0
 
     for idx in insert_at:
-        # Trouver la cle dans _modules (peut etre str(idx) ou indexe par .i)
         target_key = None
         for key, m in layers._modules.items():
             if key == str(idx) or getattr(m, "i", None) == idx:
@@ -154,7 +140,6 @@ def _inject_cbam_post_load(model, model_version, model_size):
 
         layer = layers._modules[target_key]
 
-        # Detecter les canaux de sortie depuis les modules internes
         c_out = None
         for m in reversed(list(layer.modules())):
             if isinstance(m, nn.BatchNorm2d):
@@ -168,16 +153,15 @@ def _inject_cbam_post_load(model, model_version, model_size):
             print(f"   Avertissement : canaux non detectes pour layer {idx}")
             continue
 
-        cbam_block = CBAM(c_out)
+        cbam_block = CBAM(c_out, reduction=cbam_reduction, kernel_size=cbam_kernel_size)
         layers._modules[target_key] = _CBAMWrapper(layer, cbam_block)
         injected += 1
 
-    print(f"   {injected} blocs CBAM injectes (poids backbone pre-entraines conserves)")
+    print(f"   {injected} blocs CBAM injectes (r={cbam_reduction}, k={cbam_kernel_size})")
     return model
 
 
 def _get_layer_out_channels(layer, width_multiple, max_channels):
-    """Retourne le nombre de canaux de sortie d'une couche YAML."""
     args = layer[3] if len(layer) > 3 else []
     if isinstance(args, list) and args and isinstance(args[0], int):
         return min(max(round(args[0] * width_multiple), 1), max_channels)
@@ -185,12 +169,7 @@ def _get_layer_out_channels(layer, width_multiple, max_channels):
 
 
 def _find_cbam_positions(backbone):
-    """
-    Detecte les indices de backbone apres lesquels inserer un CBAM.
-    Regles :
-      - Apres chaque bloc C3k2 / C2f / C3 suivi d'un Conv stride-2 (fin de niveau P)
-      - Apres le bloc SPPF (fin du backbone)
-    """
+    """Detecte les indices backbone apres lesquels inserer un CBAM."""
     positions = []
     attention_blocks = {"C3k2", "C2f", "C3", "C3x", "C3TR", "BottleneckCSP"}
 
@@ -199,10 +178,9 @@ def _find_cbam_positions(backbone):
         if module == "SPPF":
             positions.append(i)
         elif module in attention_blocks and i + 1 < len(backbone):
-            nxt = backbone[i + 1]
+            nxt        = backbone[i + 1]
             nxt_module = nxt[2] if len(nxt) > 2 else ""
             nxt_args   = nxt[3] if len(nxt) > 3 else []
-            # Conv stride-2 = transition vers un niveau plus profond
             if nxt_module == "Conv" and isinstance(nxt_args, list) and len(nxt_args) >= 3 and nxt_args[2] == 2:
                 positions.append(i)
 
@@ -210,14 +188,11 @@ def _find_cbam_positions(backbone):
 
 
 def build_cbam_yaml(model_version, model_size, output_dir):
-    """
-    Genere un YAML Ultralytics avec des blocs CBAM inseres dans le backbone.
-    Retourne le chemin du fichier YAML genere.
-    """
+    """Genere un YAML Ultralytics avec des blocs CBAM dans le backbone."""
     import ultralytics
 
-    pkg    = Path(ultralytics.__file__).parent
-    ver    = model_version.replace("yolo", "")   # "26" depuis "yolo26"
+    pkg  = Path(ultralytics.__file__).parent
+    ver  = model_version.replace("yolo", "")
 
     candidates = [
         pkg / "cfg" / "models" / ver / f"{model_version}.yaml",
@@ -234,15 +209,14 @@ def build_cbam_yaml(model_version, model_size, output_dir):
     with open(base_yaml_path, encoding="utf-8") as f:
         cfg = yaml.safe_load(f)
 
-    # Parametres d'echelle
-    scales         = cfg.get("scales", {})
-    scale          = scales.get(model_size, [1.0, 1.0, 1024])
-    depth_mult     = scale[0]
-    width_mult     = scale[1]
-    max_ch         = scale[2] if len(scale) > 2 else 1024
+    scales      = cfg.get("scales", {})
+    scale       = scales.get(model_size, [1.0, 1.0, 1024])
+    depth_mult  = scale[0]
+    width_mult  = scale[1]
+    max_ch      = scale[2] if len(scale) > 2 else 1024
 
-    backbone = cfg.get("backbone", [])
-    head     = cfg.get("head",     [])
+    backbone  = cfg.get("backbone", [])
+    head      = cfg.get("head",     [])
     n_bb_orig = len(backbone)
 
     insert_at = _find_cbam_positions(backbone)
@@ -252,41 +226,34 @@ def build_cbam_yaml(model_version, model_size, output_dir):
 
     print(f"   Points d'insertion CBAM : couches backbone {insert_at}")
 
-    # ----- Construire le nouveau backbone -----
     new_backbone = []
-    # cbam_shifts[orig_idx] = nouvel indice absolu apres insertion
-    # Si CBAM insere apres orig_idx, pointe sur le CBAM (pas sur la couche elle-meme)
-    cbam_shifts = {}
-    shift = 0
+    cbam_shifts  = {}
+    shift        = 0
 
     for orig_idx, layer in enumerate(backbone):
         new_abs = orig_idx + shift
         new_backbone.append(layer)
 
         if orig_idx in insert_at:
-            c_out = _get_layer_out_channels(layer, width_mult, max_ch)
-            if c_out is None:
-                # Fallback : garder meme nb de canaux que l'entree
-                c_out = 256
+            c_out = _get_layer_out_channels(layer, width_mult, max_ch) or 256
             new_backbone.append([-1, 1, "CBAM", [c_out]])
-            cbam_shifts[orig_idx] = new_abs + 1   # reference = sortie du CBAM
+            cbam_shifts[orig_idx] = new_abs + 1
             shift += 1
         else:
             cbam_shifts[orig_idx] = new_abs
 
-    n_inserted = shift   # nombre de CBAM ajoutes
+    n_inserted = shift
 
-    # ----- Mettre a jour les references dans le head -----
     def _update_ref(r):
         if not isinstance(r, int) or r < 0:
             return r
         if r < n_bb_orig:
-            return cbam_shifts[r]      # reference vers le backbone
-        return r + n_inserted          # reference vers le head
+            return cbam_shifts[r]
+        return r + n_inserted
 
     new_head = []
     for layer in head:
-        f = layer[0]
+        f     = layer[0]
         new_f = [_update_ref(x) for x in f] if isinstance(f, list) else _update_ref(f)
         new_head.append([new_f] + layer[1:])
 
@@ -303,10 +270,6 @@ def build_cbam_yaml(model_version, model_size, output_dir):
 
 
 def _load_pretrained_partial(model, pretrained_path):
-    """
-    Charge les poids pre-entraines en ignorant les couches CBAM
-    (absent du checkpoint officiel).
-    """
     ckpt = torch.load(pretrained_path, map_location="cpu", weights_only=False)
     src  = ckpt.get("model", ckpt)
     if hasattr(src, "state_dict"):
@@ -321,54 +284,64 @@ def _load_pretrained_partial(model, pretrained_path):
 
 
 # =============================================================================
+# PARSE AUG COEFFICIENTS
+# =============================================================================
+
+def parse_aug_coeffs(aug_args, classes):
+    """
+    Analyse --aug CLASS:COEFF avec correspondance partielle insensible a la casse.
+    Retourne un dict {class_name: coeff} pour les classes connues.
+    """
+    coeffs = {}
+    for entry in (aug_args or []):
+        if ':' not in entry:
+            print(f"   [WARN] --aug '{entry}' ignore (format attendu CLASS:COEFF)")
+            continue
+        raw_name, raw_coeff = entry.rsplit(':', 1)
+        try:
+            coeff = int(raw_coeff)
+        except ValueError:
+            print(f"   [WARN] --aug '{entry}' ignore (coefficient non entier)")
+            continue
+        if coeff < 1:
+            print(f"   [WARN] --aug '{entry}' ignore (coefficient < 1)")
+            continue
+        raw_lower = raw_name.lower()
+        matched = [c for c in classes if raw_lower in c.lower()]
+        if not matched:
+            print(f"   [WARN] --aug '{raw_name}' ne correspond a aucune classe connue")
+            continue
+        if len(matched) > 1:
+            print(f"   [WARN] --aug '{raw_name}' ambigu ({matched}), ignore")
+            continue
+        coeffs[matched[0]] = coeff
+    return coeffs
+
+
+# =============================================================================
 # CONFIGURATION
 # =============================================================================
 
 def build_config(args):
-    """Construire la config a partir des args CLI et des variables .env."""
-
     base_annotations = os.getenv(
         "DETECTION_DATASET_ANNOTATIONS_FILE",
         "../dataset1/annotations/instances_default.json",
     )
     ann_dir = os.path.dirname(os.path.abspath(base_annotations))
-    mode    = args.mode
 
-    # Fichier d'annotations selon le mode
-    if args.annotations_file:
-        annotations_file = args.annotations_file
-    elif mode == "nadir":
-        annotations_file = os.path.join(ann_dir, "instances_nadir.json")
-    elif mode == "oblique":
-        annotations_file = os.path.join(ann_dir, "instances_oblique.json")
-    else:
-        annotations_file = base_annotations
-
-    # Fichier de classes selon le mode
-    if args.classes_file:
-        classes_file = args.classes_file
-    elif mode == "nadir":
-        classes_file = "classes_nadir.yaml"
-    elif mode == "oblique":
-        classes_file = "classes_oblique.yaml"
-    else:
-        classes_file = os.getenv("CLASSES_FILE", "classes.yaml")
-
-    # Dossier de sortie selon le mode
-    if args.output_dir:
-        output_dir = args.output_dir
-    elif mode in ("nadir", "oblique"):
-        output_dir = os.path.join(os.getenv("OUTPUT_DIR", "./output"), mode)
-    else:
-        output_dir = os.getenv("OUTPUT_DIR", "./output")
+    annotations_file = args.annotations_file or base_annotations
+    classes_file     = args.classes_file or os.getenv("CLASSES_FILE", "classes.yaml")
+    base_output      = os.getenv("OUTPUT_DIR", "./output")
+    output_dir       = args.output_dir or base_output
 
     return {
-        "mode":             mode,
+        "mode":             args.mode,
         "images_dir":       args.images_dir or os.getenv(
                                 "DETECTION_DATASET_IMAGES_DIR",
                                 "../dataset1/images/default"
                             ),
         "annotations_file": annotations_file,
+        "ann_dir":          ann_dir,
         "classes_file":     classes_file,
         "output_dir":       output_dir,
         "model_version":    os.getenv("YOLO_VERSION", "yolo26"),
@@ -385,16 +358,31 @@ def build_config(args):
         "save_every":       5,
         "freeze_epochs":    args.freeze_epochs,
         "use_attention":    getattr(args, "attention", "none"),
-        "classes":          None,  # rempli apres chargement du YAML
+        "classes":          None,
     }
+
+
+def _build_sub_config(base_config, mode_label, mode_classes):
+    """Construit un sous-config nadir ou oblique depuis le config de base."""
+    ann_dir = base_config["ann_dir"]
+    cfg = copy.deepcopy(base_config)
+    cfg["mode"] = mode_label
+    if mode_label == "nadir":
+        cfg["annotations_file"] = os.path.join(ann_dir, "instances_nadir.json")
+        cfg["output_dir"]       = os.path.join(base_config["output_dir"], "nadir")
+    elif mode_label == "oblique":
+        cfg["annotations_file"] = os.path.join(ann_dir, "instances_oblique.json")
+        cfg["output_dir"]       = os.path.join(base_config["output_dir"], "oblique")
+    cfg["classes"] = mode_classes
+    return cfg
 
 
 # =============================================================================
 # CLASSES
 # =============================================================================
 
-def load_classes(yaml_path, mode="all"):
-    """Charger et filtrer les classes depuis le YAML selon le mode."""
+def load_classes(yaml_path, mode_classes=None):
+    """Charger et filtrer les classes depuis le YAML."""
 
     if not os.path.exists(yaml_path):
         raise FileNotFoundError(
@@ -407,15 +395,14 @@ def load_classes(yaml_path, mode="all"):
 
     all_classes = [c for c in data.get("classes", []) if c != "__background__"]
 
-    # Filtrer selon le mode
-    expected = MODE_CLASSES.get(mode, all_classes)
-    classes  = [c for c in all_classes if c in expected]
+    if mode_classes is not None:
+        classes = [c for c in all_classes if c in mode_classes]
+        if not classes:
+            classes = list(mode_classes)
+    else:
+        classes = all_classes
 
-    if not classes:
-        # Fallback : utiliser directement les classes attendues
-        classes = expected
-
-    print(f"📋 Classes ({mode}) depuis {yaml_path} :")
+    print(f"Classes depuis {yaml_path}:")
     for i, c in enumerate(classes):
         print(f"   [{i}] {c}")
 
@@ -436,7 +423,6 @@ def format_time(seconds):
 
 
 def coco_to_yolo_bbox(bbox, img_width, img_height):
-    """Convertir bbox COCO [x,y,w,h] vers YOLO normalise [cx,cy,w,h]."""
     x, y, w, h = bbox
     cx = max(0.0, min(1.0, (x + w / 2) / img_width))
     cy = max(0.0, min(1.0, (y + h / 2) / img_height))
@@ -450,8 +436,6 @@ def coco_to_yolo_bbox(bbox, img_width, img_height):
 # =============================================================================
 
 def stratified_split(coco, train_split, val_split, test_split, seed=42):
-    """Split global des images (pas de stratification par classe pour YOLO)."""
-
     np.random.seed(seed)
 
     all_ids = [img_id for img_id in coco.imgs if coco.getAnnIds(imgIds=img_id)]
@@ -479,19 +463,14 @@ def stratified_split(coco, train_split, val_split, test_split, seed=42):
 
 
 # =============================================================================
-# OVERSAMPLING
+# OVERSAMPLING (file-based, pour YOLO)
 # =============================================================================
 
 def oversample_train_set(images_dir, labels_dir, classes, weights_map):
     """
     Dupliquer les images d'entrainement pour les classes sous-representees.
-
     weights_map : {class_name: facteur}
-    Une image est copiee (max_weight - 1) fois supplementaires.
-    Retourne le nombre de copies creees.
     """
-
-    # Index : class_idx -> poids
     weight_by_idx = {
         idx: weights_map[cls_name]
         for idx, cls_name in enumerate(classes)
@@ -505,7 +484,6 @@ def oversample_train_set(images_dir, labels_dir, classes, weights_map):
     n_copies = 0
 
     for lbl_file in sorted(Path(labels_dir).glob("*.txt")):
-        # Ne pas re-oversampler les copies deja creees
         if "_os" in lbl_file.stem:
             continue
 
@@ -523,7 +501,6 @@ def oversample_train_set(images_dir, labels_dir, classes, weights_map):
         if max_w <= 1:
             continue
 
-        # Trouver l'image correspondante
         img_file = None
         for ext in IMG_EXTS:
             p = Path(images_dir) / (lbl_file.stem + ext)
@@ -534,7 +511,6 @@ def oversample_train_set(images_dir, labels_dir, classes, weights_map):
         if img_file is None:
             continue
 
-        # Creer les copies supplementaires
         for k in range(1, max_w):
             stem = f"{lbl_file.stem}_os{k}"
             shutil.copy2(lbl_file, Path(labels_dir) / f"{stem}.txt")
@@ -549,13 +525,13 @@ def oversample_train_set(images_dir, labels_dir, classes, weights_map):
 # =============================================================================
 
 def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
-                         train_split, val_split, test_split, mode="all"):
+                         train_split, val_split, test_split, mode="all",
+                         aug_coeffs=None):
     """
-    Convertir COCO -> format YOLO avec split train/val/test
-    et oversampling optionnel (mode oblique).
+    Convertir COCO -> format YOLO avec split train/val/test et oversampling
+    pilote par aug_coeffs (remplace OVERSAMPLE_WEIGHTS_OBLIQUE).
     """
-
-    print("📂 Preparation du dataset YOLO...")
+    print("Preparation du dataset YOLO...")
 
     base_output = os.path.abspath(output_dir)
     dataset_dir = os.path.join(base_output, "dataset")
@@ -576,11 +552,10 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
 
     coco = COCO(annotations_file)
 
-    # Mapping cat_id COCO -> class_idx YOLO (uniquement les classes du mode)
-    cat_ids          = coco.getCatIds()
-    cat_name_to_id   = {coco.cats[cid]["name"]: cid for cid in cat_ids}
-    valid_cat_ids    = [cat_name_to_id[c] for c in classes if c in cat_name_to_id]
-    cat_mapping      = {cat_id: idx for idx, cat_id in enumerate(valid_cat_ids)}
+    cat_ids        = coco.getCatIds()
+    cat_name_to_id = {coco.cats[cid]["name"]: cid for cid in cat_ids}
+    valid_cat_ids  = [cat_name_to_id[c] for c in classes if c in cat_name_to_id]
+    cat_mapping    = {cat_id: idx for idx, cat_id in enumerate(valid_cat_ids)}
 
     print(f"   Mode '{mode}' — classes : {[coco.cats[c]['name'] for c in valid_cat_ids]}")
 
@@ -642,22 +617,19 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
 
             stats[split_name] += 1
 
-    # -------------------------------------------------------------------
-    # Oversampling (mode oblique uniquement)
-    # -------------------------------------------------------------------
-
-    if mode == "oblique":
-        print("\n   Oversampling (oblique) :")
-        for cls_name, w in OVERSAMPLE_WEIGHTS_OBLIQUE.items():
-            print(f"      {cls_name:<30} x{w}")
+    # Oversampling via aug_coeffs
+    if aug_coeffs:
+        print("\n   Oversampling (aug_coeffs) :")
+        for cls_name, w in aug_coeffs.items():
+            if cls_name in classes:
+                print(f"      {cls_name:<30} x{w}")
         n_copies = oversample_train_set(
             dirs["train_img"], dirs["train_lbl"],
-            classes, OVERSAMPLE_WEIGHTS_OBLIQUE,
+            classes, aug_coeffs,
         )
         stats["oversampling_copies"] = n_copies
         print(f"   + {n_copies} copies ajoutees au train set")
 
-        # Compter les annotations par classe apres oversampling
         post_os = {c: 0 for c in classes}
         for lbl_file in Path(dirs["train_lbl"]).glob("*.txt"):
             with open(lbl_file) as f:
@@ -667,10 +639,7 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
                         post_os[classes[int(parts[0])]] += 1
         stats["per_class_after_oversampling"] = post_os
 
-    # -------------------------------------------------------------------
     # dataset.yaml
-    # -------------------------------------------------------------------
-
     yaml_path = os.path.join(dataset_dir, "dataset.yaml")
     with open(yaml_path, "w") as f:
         yaml.dump(
@@ -685,7 +654,6 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
             default_flow_style=False,
         )
 
-    # Infos test set pour evaluate_dual.py
     with open(os.path.join(dataset_dir, "test_info.json"), "w") as f:
         json.dump(
             {
@@ -699,10 +667,9 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
             indent=2,
         )
 
-    post_os    = stats.get("per_class_after_oversampling")
-    has_os     = post_os is not None
+    post_os = stats.get("per_class_after_oversampling")
+    has_os  = post_os is not None
 
-    # --- Repartition images et annotations par split ---
     total_imgs    = stats["train"] + stats["val"] + stats["test"]
     train_imgs_os = len(list(Path(dirs["train_img"]).glob("*.*")))
     print(f"\n   {'':=<60}")
@@ -720,36 +687,16 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
           else f"   {'Val':<10} {stats['val']:>8}  {stats['ann_per_split']['val']:>12}")
     print(f"   {'Test':<10} {stats['test']:>8}  {stats['test']:>9}  {stats['ann_per_split']['test']:>12}" if has_os
           else f"   {'Test':<10} {stats['test']:>8}  {stats['ann_per_split']['test']:>12}")
-    print(f"   {'-'*45}" if has_os else f"   {'-'*34}")
-    print(f"   {'Total':<10} {total_imgs:>8}  {'-':>9}  {stats['annotations']:>12}" if has_os
+    print(f"   {'Total':<10} {total_imgs:>8}  {'':>9}  {stats['annotations']:>12}" if has_os
           else f"   {'Total':<10} {total_imgs:>8}  {stats['annotations']:>12}")
-
-    # --- Distribution par classe par split ---
-    if has_os:
-        print(f"\n   {'Classe':<30} {'Train':>7}  {'Train OS':>9}  {'Val':>6}  {'Test':>6}")
-        print(f"   {'-'*65}")
-        for cls_name in stats['per_class']:
-            tr    = stats['per_class_per_split']['train'][cls_name]
-            tr_os = post_os[cls_name]
-            va    = stats['per_class_per_split']['val'][cls_name]
-            te    = stats['per_class_per_split']['test'][cls_name]
-            print(f"   {cls_name:<30} {tr:>7}  {tr_os:>9}  {va:>6}  {te:>6}")
-    else:
-        print(f"\n   {'Classe':<30} {'Train':>7}  {'Val':>6}  {'Test':>6}")
-        print(f"   {'-'*53}")
-        for cls_name in stats['per_class']:
-            tr = stats['per_class_per_split']['train'][cls_name]
-            va = stats['per_class_per_split']['val'][cls_name]
-            te = stats['per_class_per_split']['test'][cls_name]
-            print(f"   {cls_name:<30} {tr:>7}  {va:>6}  {te:>6}")
 
     print(f"\n   Augmentations actives :")
     print(f"      flipud  = 0.5   (flip vertical)")
     print(f"      hsv_h   = 0.05  (teinte)")
     print(f"      hsv_s   = 0.162 (saturation)")
     print(f"      hsv_v   = 0.113 (luminosite)")
-    print(f"      fliplr  = 0.0   (flip horizontal desactive — images obliques)")
-    print(f"   Dataset      : {dataset_dir}")
+    print(f"      fliplr  = 0.0   (flip horizontal desactive)")
+    print(f"   Dataset : {dataset_dir}")
 
     return yaml_path, stats
 
@@ -759,14 +706,7 @@ def prepare_yolo_dataset(images_dir, annotations_file, output_dir, classes,
 # =============================================================================
 
 def make_staged_training_callback(freeze_epochs):
-    """
-    Callback qui degele le backbone a l'epoch `freeze_epochs`
-    et reduit le LR d'un facteur 5 pour la phase de fine-tuning.
-    Les blocs CBAM (poids aleatoires) sont toujours entrainables des le debut.
-    """
-
     def on_train_epoch_start(trainer):
-        # CBAM blocks must always be trainable — unfreeze them at epoch 0
         if trainer.epoch == 0:
             for name, v in trainer.model.named_parameters():
                 if "cbam" in name.lower():
@@ -779,16 +719,12 @@ def make_staged_training_callback(freeze_epochs):
                 lr = pg.get("initial_lr", pg["lr"])
                 pg["lr"]         = lr / 5
                 pg["initial_lr"] = lr / 5
-            print(f"\n🔓 Backbone degele (epoch {freeze_epochs + 1}) | LR divise par 5")
+            print(f"\n   Backbone degele (epoch {freeze_epochs + 1}) | LR divise par 5")
 
     return on_train_epoch_start
 
 
 def make_per_class_ap_callback():
-    """
-    Callback qui affiche l'AP@50 par classe apres chaque validation.
-    """
-
     def on_fit_epoch_end(trainer):
         if not hasattr(trainer, "validator"):
             return
@@ -808,26 +744,23 @@ def make_per_class_ap_callback():
         if len(ap_class_index) == 0:
             return
 
-        ap50 = ap_matrix[:, 0] if ap_matrix.ndim == 2 else ap_matrix
+        ap50  = ap_matrix[:, 0] if ap_matrix.ndim == 2 else ap_matrix
         names = trainer.data.get("names", {})
 
         print(f"\n   AP@50 par classe (epoch {trainer.epoch + 1}) :")
         for idx, ap in zip(ap_class_index, ap50):
             name = names.get(int(idx), f"class_{idx}")
-            bar  = "█" * int(ap * 20)
-            print(f"      {name:<25} {ap:.4f}  {bar}")
+            print(f"      {name:<25} {ap:.4f}")
 
     return on_fit_epoch_end
 
 
 # =============================================================================
-# AFFICHAGE AP PAR CLASSE (apres entrainement)
+# AFFICHAGE AP PAR CLASSE
 # =============================================================================
 
 def display_per_class_ap(model, yaml_path, split="val"):
-    """Lancer une validation et afficher l'AP@50 par classe."""
-
-    print(f"\n📊 AP@50 par classe — validation finale (split={split}) :")
+    print(f"\n   AP@50 par classe — validation finale (split={split}) :")
 
     try:
         val_results = model.val(data=yaml_path, split=split, verbose=False)
@@ -847,14 +780,11 @@ def display_per_class_ap(model, yaml_path, split="val"):
             print(f"   {'-'*42}")
             for idx, ap in zip(ap_class_index, ap50_per_class):
                 name = names.get(int(idx), f"class_{idx}")
-                bar  = "█" * int(ap * 20)
-                print(f"   {name:<30} {ap:>8.4f}  {bar}")
+                print(f"   {name:<30} {ap:>8.4f}")
             print(f"   {'-'*42}")
 
         print(f"   {'mAP@50':<30} {box.map50:>8.4f}")
         print(f"   {'mAP@50:95':<30} {box.map:>8.4f}")
-        print(f"   {'Precision':<30} {box.mp:>8.4f}")
-        print(f"   {'Recall':<30} {box.mr:>8.4f}")
 
     except Exception as e:
         print(f"   Avertissement — AP par classe indisponible : {e}")
@@ -865,8 +795,6 @@ def display_per_class_ap(model, yaml_path, split="val"):
 # =============================================================================
 
 def plot_training_curves(history, train_dir, mode):
-    """Tracer et sauvegarder les courbes d'entrainement."""
-
     if not history.get("mAP50"):
         return
 
@@ -874,7 +802,6 @@ def plot_training_curves(history, train_dir, mode):
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
     fig.suptitle(f"Courbes d'entrainement YOLO — Mode {mode.upper()}", fontsize=13)
 
-    # Loss totale
     def safe_sum(a, b, c):
         return [x + y + z for x, y, z in zip(a, b, c)]
 
@@ -886,33 +813,23 @@ def plot_training_curves(history, train_dir, mode):
     )
     axes[0, 0].plot(epochs, train_loss, "b-", label="Train")
     axes[0, 0].plot(epochs, val_loss,   "r-", label="Val")
-    axes[0, 0].set_title("Loss totale")
-    axes[0, 0].legend()
-    axes[0, 0].grid(True, alpha=0.3)
+    axes[0, 0].set_title("Loss totale"); axes[0, 0].legend(); axes[0, 0].grid(True, alpha=0.3)
 
-    # mAP
     axes[0, 1].plot(epochs, history["mAP50"],    "g-", label="mAP@50")
     axes[0, 1].plot(epochs, history["mAP50_95"], "b-", label="mAP@50:95")
-    axes[0, 1].set_title("mAP")
-    axes[0, 1].legend()
-    axes[0, 1].grid(True, alpha=0.3)
-    axes[0, 1].set_ylim(0, 1)
+    axes[0, 1].set_title("mAP"); axes[0, 1].legend()
+    axes[0, 1].grid(True, alpha=0.3); axes[0, 1].set_ylim(0, 1)
 
-    # Precision / Recall
     axes[1, 0].plot(epochs, history["precision"], "g-", label="Precision")
     axes[1, 0].plot(epochs, history["recall"],    "b-", label="Recall")
-    axes[1, 0].set_title("Precision / Recall")
-    axes[1, 0].legend()
-    axes[1, 0].grid(True, alpha=0.3)
-    axes[1, 0].set_ylim(0, 1)
+    axes[1, 0].set_title("Precision / Recall"); axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3); axes[1, 0].set_ylim(0, 1)
 
-    # Composantes loss (train)
     axes[1, 1].plot(epochs, history["train_box_loss"], label="Box")
     axes[1, 1].plot(epochs, history["train_cls_loss"], label="Cls")
     axes[1, 1].plot(epochs, history["train_dfl_loss"], label="DFL")
     axes[1, 1].set_title("Composantes Loss (train)")
-    axes[1, 1].legend()
-    axes[1, 1].grid(True, alpha=0.3)
+    axes[1, 1].legend(); axes[1, 1].grid(True, alpha=0.3)
 
     plt.tight_layout()
     out = os.path.join(train_dir, "training_curves.png")
@@ -922,33 +839,35 @@ def plot_training_curves(history, train_dir, mode):
 
 
 # =============================================================================
-# ENTRAINEMENT
+# ENTRAINEMENT PRINCIPAL
 # =============================================================================
 
-def train_yolo(config):
-    """Lancer l'entrainement YOLO avec la config donnee."""
-
-    mode    = config["mode"]
+def _train_single(config, aug_coeffs, mode_label, training_mode,
+                  cbam_reduction=16, cbam_kernel_size=7):
+    """
+    Lance un entraînement YOLO complet.
+    training_mode: 'simple' | 'attention'
+    """
     classes = config["classes"]
 
     print("=" * 70)
-    print(f"   YOLO ({config['model_version']}{config['model_size']}) — Mode : {mode.upper()}")
+    print(f"   YOLO ({config['model_version']}{config['model_size']}) — Mode : {mode_label.upper()} [{training_mode}]")
     print("=" * 70)
-    print(f"\n📋 Configuration :")
-    print(f"   Mode          : {mode}")
+    print(f"\n   Configuration :")
+    print(f"   Mode          : {mode_label}")
     print(f"   Images        : {config['images_dir']}")
     print(f"   Annotations   : {config['annotations_file']}")
     print(f"   Classes       : {classes}")
     print(f"   Modele        : {config['model_version']}{config['model_size']}")
     print(f"   Epochs        : {config['num_epochs']}  Batch : {config['batch_size']}  LR : {config['learning_rate']}")
     print(f"   Freeze epochs : {config['freeze_epochs']}")
-    print(f"   LR schedule   : CosineAnnealingLR")
-    print(f"   Attention     : {config.get('use_attention', 'none').upper()}")
+    print(f"   Attention     : {training_mode}")
+    if aug_coeffs:
+        print(f"   Oversampling  : {aug_coeffs}")
 
     if not os.path.exists(config["annotations_file"]):
         raise FileNotFoundError(
-            f"Annotations introuvables : {config['annotations_file']}\n"
-            f"Lancez d'abord : python split_dataset.py"
+            f"Annotations introuvables : {config['annotations_file']}"
         )
 
     os.makedirs(config["output_dir"], exist_ok=True)
@@ -961,45 +880,37 @@ def train_yolo(config):
         config["train_split"],
         config["val_split"],
         config["test_split"],
-        mode=mode,
+        mode=mode_label,
+        aug_coeffs=aug_coeffs,
     )
 
     model_name = f"{config['model_version']}{config['model_size']}.pt"
-    use_cbam   = config.get("use_attention", "none") == "cbam"
+    use_cbam   = training_mode == "attention"
 
     gc.collect()
 
     if use_cbam:
-        print(f"\n🧠 Chargement avec CBAM (post-load) : {model_name}")
-        model = YOLO(model_name)   # poids pre-entraines charges normalement
-        _inject_cbam_post_load(model, config["model_version"], config["model_size"])
+        print(f"\n   Chargement avec CBAM (post-load) : {model_name}")
+        model = YOLO(model_name)
+        _inject_cbam_post_load(model, config["model_version"], config["model_size"],
+                               cbam_reduction, cbam_kernel_size)
     else:
-        print(f"\n🧠 Chargement : {model_name}")
+        print(f"\n   Chargement : {model_name}")
         model = YOLO(model_name)
 
-    # -------------------------------------------------------------------
-    # Callbacks
-    # -------------------------------------------------------------------
-
-    # AP@50 par classe a chaque epoch
     model.add_callback("on_fit_epoch_end", make_per_class_ap_callback())
 
-    # Staged training : geler puis degeler
     freeze_n_layers = 0
     if config["freeze_epochs"] > 0:
-        freeze_n_layers = 10  # Premiere couches du backbone YOLO
+        freeze_n_layers = 10
         model.add_callback(
             "on_train_epoch_start",
             make_staged_training_callback(config["freeze_epochs"]),
         )
         print(
-            f"\n🔒 Staged training : {freeze_n_layers} couches gelees "
+            f"\n   Staged training : {freeze_n_layers} couches gelees "
             f"pour les {config['freeze_epochs']} premieres epochs"
         )
-
-    # -------------------------------------------------------------------
-    # Entrainement
-    # -------------------------------------------------------------------
 
     print("\n" + "=" * 70)
     print(f"   ENTRAINEMENT — {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1016,9 +927,7 @@ def train_yolo(config):
         lr0=config["learning_rate"],
         momentum=config["momentum"],
         weight_decay=config["weight_decay"],
-        # ---- CosineAnnealingLR (remplace StepLR trop agressif) ----
         cos_lr=True,
-        # ---- Augmentations (calibrees par Optuna) ----
         fliplr=0.0,
         flipud=0.5,
         degrees=0.0,
@@ -1027,12 +936,9 @@ def train_yolo(config):
         hsv_v=0.113,
         mosaic=0.0,
         mixup=0.0,
-        # ---- Staged training ----
         freeze=freeze_n_layers if config["freeze_epochs"] > 0 else 0,
-        # ---- Dossier de sortie (contient le mode pour que evaluate_dual.py trouve le bon modele) ----
-        project=mode,
+        project=mode_label,
         name="train",
-        # ---- Divers ----
         seed=42,
         verbose=True,
         save=True,
@@ -1051,17 +957,9 @@ def train_yolo(config):
     train_dir   = str(results.save_dir)
     weights_dir = os.path.join(train_dir, "weights")
 
-    print(f"\n📁 Dossier YOLO : {train_dir}")
-
-    # -------------------------------------------------------------------
-    # AP@50 par classe apres entrainement
-    # -------------------------------------------------------------------
+    print(f"\n   Dossier YOLO : {train_dir}")
 
     display_per_class_ap(model, yaml_path, split="val")
-
-    # -------------------------------------------------------------------
-    # Historique des metriques
-    # -------------------------------------------------------------------
 
     history = {
         "mAP50": [], "mAP50_95": [], "precision": [], "recall": [],
@@ -1105,11 +1003,7 @@ def train_yolo(config):
     with open(os.path.join(train_dir, "history.json"), "w") as f:
         json.dump(history, f, indent=2, default=str)
 
-    # -------------------------------------------------------------------
-    # Copier les modeles
-    # -------------------------------------------------------------------
-
-    print("\n📦 Copie des modeles :")
+    print("\n   Copie des modeles :")
     for src, dst in [("best.pt", "best_model.pt"), ("last.pt", "final_model.pt")]:
         src_p = os.path.join(weights_dir, src)
         dst_p = os.path.join(train_dir, dst)
@@ -1119,36 +1013,28 @@ def train_yolo(config):
         else:
             print(f"   Avertissement — {src} non trouve dans {weights_dir}")
 
-    # Sauvegarder les infos du modele pour inference_dual.py et evaluate_dual.py
     model_info = {
-        "mode":        mode,
-        "train_dir":   train_dir,
-        "best_model":  os.path.join(train_dir, "best_model.pt"),
-        "final_model": os.path.join(train_dir, "final_model.pt"),
-        "dataset_yaml": yaml_path,
-        "classes":     classes,
-        "image_size":  config["image_size"],
-        "trained_at":  datetime.now().isoformat(),
+        "mode":          mode_label,
+        "training_mode": training_mode,
+        "train_dir":     train_dir,
+        "best_model":    os.path.join(train_dir, "best_model.pt"),
+        "final_model":   os.path.join(train_dir, "final_model.pt"),
+        "dataset_yaml":  yaml_path,
+        "classes":       classes,
+        "image_size":    config["image_size"],
+        "trained_at":    datetime.now().isoformat(),
     }
-    info_path = os.path.join(config["output_dir"], f"model_info_{mode}.json")
+    info_path = os.path.join(config["output_dir"], f"model_info_{mode_label}.json")
     with open(info_path, "w") as f:
         json.dump(model_info, f, indent=2)
 
-    # -------------------------------------------------------------------
-    # Courbes d'entrainement
-    # -------------------------------------------------------------------
-
-    plot_training_curves(history, train_dir, mode)
-
-    # -------------------------------------------------------------------
-    # Rapport final
-    # -------------------------------------------------------------------
+    plot_training_curves(history, train_dir, mode_label)
 
     best = {k: max(history[k]) if history[k] else 0
             for k in ["mAP50", "mAP50_95", "precision", "recall"]}
 
     print("\n" + "=" * 70)
-    print(f"   TERMINE — {mode.upper()}")
+    print(f"   TERMINE — {mode_label.upper()} [{training_mode}]")
     print("=" * 70)
     print(f"   mAP@50      : {best['mAP50']:.4f} ({best['mAP50'] * 100:.2f}%)")
     print(f"   mAP@50:95   : {best['mAP50_95']:.4f}")
@@ -1159,23 +1045,122 @@ def train_yolo(config):
     print("=" * 70)
 
     with open(os.path.join(train_dir, "training_report.txt"), "w", encoding="utf-8") as f:
-        f.write(f"YOLO ({config['model_version']}{config['model_size']}) — Mode {mode}\n")
+        f.write(f"YOLO ({config['model_version']}{config['model_size']}) — Mode {mode_label} [{training_mode}]\n")
         f.write("=" * 50 + "\n\n")
-        f.write(f"Dataset      : {config['images_dir']}\n")
-        f.write(f"Mode         : {mode}\n")
-        f.write(f"Classes      : {classes}\n")
-        f.write(f"Epochs       : {config['num_epochs']}  Batch : {config['batch_size']}\n")
-        f.write(f"LR schedule  : CosineAnnealingLR (cos_lr=True)\n")
-        f.write(f"Attention    : {config.get('use_attention', 'none').upper()}\n")
-        f.write(f"Freeze       : {config['freeze_epochs']} epochs\n\n")
-        f.write(f"mAP@50       : {best['mAP50']:.4f}\n")
-        f.write(f"mAP@50:95    : {best['mAP50_95']:.4f}\n")
-        f.write(f"Precision    : {best['precision']:.4f}\n")
-        f.write(f"Recall       : {best['recall']:.4f}\n")
-        f.write(f"Temps        : {format_time(total_time)}\n")
-        f.write(f"Chemin       : {train_dir}\n")
+        f.write(f"Mode           : {mode_label}\n")
+        f.write(f"Training mode  : {training_mode}\n")
+        f.write(f"Dataset        : {config['images_dir']}\n")
+        f.write(f"Classes        : {classes}\n")
+        f.write(f"Epochs         : {config['num_epochs']}  Batch : {config['batch_size']}\n")
+        f.write(f"LR schedule    : CosineAnnealingLR (cos_lr=True)\n")
+        f.write(f"Freeze         : {config['freeze_epochs']} epochs\n\n")
+        f.write(f"mAP@50         : {best['mAP50']:.4f}\n")
+        f.write(f"mAP@50:95      : {best['mAP50_95']:.4f}\n")
+        f.write(f"Precision      : {best['precision']:.4f}\n")
+        f.write(f"Recall         : {best['recall']:.4f}\n")
+        f.write(f"Temps          : {format_time(total_time)}\n")
+        f.write(f"Chemin         : {train_dir}\n")
 
     return model, history, train_dir
+
+
+# =============================================================================
+# OPTIMISATION OPTUNA
+# =============================================================================
+
+def _run_optimization(config, aug_coeffs, mode_label, cbam_reduction, cbam_kernel_size,
+                      n_trials, n_epochs_per_trial):
+    import optuna
+    from optuna.samplers import TPESampler
+    from optuna.pruners import MedianPruner
+
+    classes = config["classes"]
+
+    # Préparer le dataset une seule fois
+    yaml_path, _ = prepare_yolo_dataset(
+        config["images_dir"],
+        config["annotations_file"],
+        os.path.join(config["output_dir"], "optuna_dataset"),
+        classes,
+        config["train_split"],
+        config["val_split"],
+        config["test_split"],
+        mode=mode_label,
+        aug_coeffs=aug_coeffs,
+    )
+
+    model_name = f"{config['model_version']}{config['model_size']}.pt"
+
+    def objective(trial):
+        lr           = trial.suggest_float("lr",           1e-4, 1e-1, log=True)
+        momentum     = trial.suggest_float("momentum",     0.7,  0.99)
+        weight_decay = trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True)
+        use_cbam     = trial.suggest_categorical("use_cbam", [True, False])
+
+        model = YOLO(model_name)
+        if use_cbam:
+            reduction   = trial.suggest_categorical("cbam_reduction",   [8, 16, 32])
+            kernel_size = trial.suggest_categorical("cbam_kernel_size",  [3, 5, 7])
+            _inject_cbam_post_load(model, config["model_version"], config["model_size"],
+                                   reduction, kernel_size)
+
+        try:
+            results = model.train(
+                data=yaml_path,
+                epochs=n_epochs_per_trial,
+                batch=config["batch_size"],
+                imgsz=config["image_size"],
+                optimizer="SGD",
+                lr0=lr,
+                momentum=momentum,
+                weight_decay=weight_decay,
+                cos_lr=True,
+                fliplr=0.0,
+                flipud=0.5,
+                hsv_h=0.05,
+                hsv_s=0.162,
+                hsv_v=0.113,
+                mosaic=0.0,
+                project=f"{mode_label}/optuna",
+                name=f"trial_{trial.number}",
+                seed=42,
+                verbose=False,
+                save=False,
+                plots=False,
+                cache=False,
+                workers=0,
+            )
+            map50 = getattr(getattr(results, "box", None), "map50", 0.0) or 0.0
+        except Exception as e:
+            print(f"   Trial {trial.number} erreur: {e}")
+            map50 = 0.0
+        finally:
+            del model
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+        return float(map50)
+
+    output_dir = OPTUNA_CONFIG["output_dir"]
+    os.makedirs(output_dir, exist_ok=True)
+
+    study = optuna.create_study(
+        direction="maximize",
+        sampler=TPESampler(),
+        pruner=MedianPruner(),
+        study_name=f"{OPTUNA_CONFIG['study_name']}_{mode_label}",
+    )
+    print(f"\n   Optuna: {n_trials} trials × {n_epochs_per_trial} epochs chacun")
+    study.optimize(objective, n_trials=n_trials)
+
+    best = study.best_params
+    print(f"\n   Meilleurs hyperparametres: {best}")
+
+    with open(os.path.join(output_dir, f"optuna_best_{mode_label}.json"), 'w') as f:
+        json.dump({"best_params": best, "best_value": study.best_value}, f, indent=2)
+
+    return best
 
 
 # =============================================================================
@@ -1184,57 +1169,125 @@ def train_yolo(config):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Entrainement YOLO dual — nadir / oblique / all",
+        description="Entrainement YOLO — detection des toitures cadastrales",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
         "--mode",
-        choices=["nadir", "oblique", "all"],
-        default="all",
-        help=(
-            "Mode d'entrainement : "
-            "nadir (panneau_solaire uniquement), "
-            "oblique (batiments uniquement), "
-            "all (toutes les classes)"
-        ),
+        choices=["simple", "attention", "optimize", "dual",
+                 "nadir", "oblique", "all"],  # nadir/oblique/all: alias deprecies
+        default="simple",
+        help="Mode d'entrainement",
     )
-    parser.add_argument("--images-dir",       default=None, help="Dossier images du dataset")
-    parser.add_argument("--annotations-file", default=None, help="Fichier annotations COCO JSON")
-    parser.add_argument("--classes-file",     default=None, help="Fichier classes YAML")
-    parser.add_argument("--output-dir",       default=None, help="Dossier de sortie")
+    parser.add_argument("--aug",              nargs="*", default=[],
+                        metavar="CLASS:COEFF",
+                        help="Coefficients d'oversampling par classe (ex: panneau_solaire:3)")
+    parser.add_argument("--cbam-reduction",   type=int, default=16,
+                        help="Facteur de reduction CBAM (ChannelAttention)")
+    parser.add_argument("--cbam-kernel-size", type=int, default=7,
+                        help="Taille du kernel CBAM (SpatialAttention)")
+    parser.add_argument("--n-trials",         type=int, default=OPTUNA_CONFIG["n_trials"],
+                        help="Nombre de trials Optuna")
+    parser.add_argument("--n-epochs-trial",   type=int, default=OPTUNA_CONFIG["n_epochs_per_trial"],
+                        help="Epochs par trial Optuna")
+    parser.add_argument("--images-dir",       default=None)
+    parser.add_argument("--annotations-file", default=None)
+    parser.add_argument("--classes-file",     default=None)
+    parser.add_argument("--output-dir",       default=None)
     parser.add_argument(
         "--freeze-epochs",
         type=int,
         default=0,
-        help=(
-            "Nombre d'epochs avec backbone gele (staged training). "
-            "0 = pas de staged training."
-        ),
+        help="Nombre d'epochs avec backbone gele (staged training). 0 = desactive.",
     )
     parser.add_argument(
         "--attention",
         choices=["none", "cbam"],
         default="none",
-        help="Mecanisme d'attention a integrer dans le backbone (default: none).",
+        help="(deprecated) Mecanisme d'attention. Utilisez --mode attention.",
     )
     args = parser.parse_args()
 
+    # Alias deprecies
+    mode = args.mode
+    if mode == "nadir":
+        print("[DEPRECATED] --mode nadir est deprecie. Utilisez --mode dual.")
+        args.mode = "simple"
+        if not args.annotations_file:
+            base = os.getenv("DETECTION_DATASET_ANNOTATIONS_FILE",
+                             "../dataset1/annotations/instances_default.json")
+            args.annotations_file = os.path.join(
+                os.path.dirname(os.path.abspath(base)), "instances_nadir.json"
+            )
+    elif mode == "oblique":
+        print("[DEPRECATED] --mode oblique est deprecie. Utilisez --mode dual.")
+        args.mode = "simple"
+        if not args.annotations_file:
+            base = os.getenv("DETECTION_DATASET_ANNOTATIONS_FILE",
+                             "../dataset1/annotations/instances_default.json")
+            args.annotations_file = os.path.join(
+                os.path.dirname(os.path.abspath(base)), "instances_oblique.json"
+            )
+    elif mode == "all":
+        print("[DEPRECATED] --mode all est deprecie. Utilisez --mode simple.")
+        args.mode = "simple"
+    mode = args.mode
+
+    # --attention cbam upgrades to attention mode
+    if getattr(args, "attention", "none") == "cbam" and mode == "simple":
+        mode = "attention"
+        args.mode = "attention"
+
     config = build_config(args)
-    config["classes"] = load_classes(config["classes_file"], mode=config["mode"])
 
-    if not config["classes"]:
-        print(f"Erreur : aucune classe pour le mode '{config['mode']}'")
-        return
+    all_classes = (MODE_CLASSES["nadir"] + MODE_CLASSES["oblique"])
 
-    model, history, train_dir = train_yolo(config)
+    if mode == "dual":
+        # Phase 1 — Nadir
+        nadir_classes = load_classes(config["classes_file"], MODE_CLASSES["nadir"])
+        nadir_cfg     = _build_sub_config(config, "nadir", nadir_classes)
+        nadir_aug     = parse_aug_coeffs(args.aug, nadir_classes)
+        print(f"\n[DUAL] Phase 1 — Nadir ({nadir_classes})")
+        _train_single(nadir_cfg, nadir_aug, "nadir", "simple",
+                      args.cbam_reduction, args.cbam_kernel_size)
 
-    print(f"\nProchaines etapes :")
-    if config["mode"] == "nadir":
-        print(f"   python train.py --mode oblique")
-    elif config["mode"] == "oblique":
-        print(f"   python train.py --mode nadir")
-    print(f"   python evaluate_dual.py")
-    print(f"   python inference_dual.py --input ../test")
+        # Phase 2 — Oblique
+        oblique_classes = load_classes(config["classes_file"], MODE_CLASSES["oblique"])
+        oblique_cfg     = _build_sub_config(config, "oblique", oblique_classes)
+        oblique_aug     = parse_aug_coeffs(args.aug, oblique_classes)
+        print(f"\n[DUAL] Phase 2 — Oblique ({oblique_classes})")
+        _train_single(oblique_cfg, oblique_aug, "oblique", "simple",
+                      args.cbam_reduction, args.cbam_kernel_size)
+
+    elif mode == "optimize":
+        config["classes"] = load_classes(config["classes_file"], all_classes)
+        aug_coeffs        = parse_aug_coeffs(args.aug, config["classes"])
+        best_params = _run_optimization(
+            config, aug_coeffs, "all",
+            args.cbam_reduction, args.cbam_kernel_size,
+            args.n_trials, args.n_epochs_trial,
+        )
+        use_cbam = best_params.get("use_cbam", False)
+        config["learning_rate"] = best_params.get("lr",           config["learning_rate"])
+        config["momentum"]      = best_params.get("momentum",     config["momentum"])
+        config["weight_decay"]  = best_params.get("weight_decay", config["weight_decay"])
+        cbam_r = best_params.get("cbam_reduction",   args.cbam_reduction)
+        cbam_k = best_params.get("cbam_kernel_size",  args.cbam_kernel_size)
+        training_mode = "attention" if use_cbam else "simple"
+        _train_single(config, aug_coeffs, "all", training_mode, cbam_r, cbam_k)
+
+    elif mode == "attention":
+        config["classes"] = load_classes(config["classes_file"], all_classes)
+        aug_coeffs        = parse_aug_coeffs(args.aug, config["classes"])
+        _train_single(config, aug_coeffs, "all", "attention",
+                      args.cbam_reduction, args.cbam_kernel_size)
+
+    else:  # simple (+ anciens alias redirigés)
+        if config["classes"] is None:
+            config["classes"] = load_classes(config["classes_file"], all_classes)
+        aug_coeffs = parse_aug_coeffs(args.aug, config["classes"])
+        _train_single(config, aug_coeffs, "all", "simple",
+                      args.cbam_reduction, args.cbam_kernel_size)
 
 
 if __name__ == "__main__":
