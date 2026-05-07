@@ -30,30 +30,58 @@ except ImportError:
 # =============================================================================
 
 def find_best_model():
-    """Trouver automatiquement le meilleur modèle dans runs/detect/"""
-    
-    # Chercher dans runs/detect/
+    """Trouve le meilleur modele YOLO (unified ou partial dual)."""
+    env_model = os.getenv("MODEL_PATH", None)
+    if env_model and os.path.exists(env_model):
+        return env_model
+
+    # Modes unifies : ./simple/train/, ./attention/train/, ./optimize/train/
+    for project in ("simple", "attention", "optimize", "all"):
+        if not os.path.isdir(project):
+            continue
+        runs = sorted(
+            [d for d in os.listdir(project) if d.startswith("train")],
+            key=lambda x: int(x[5:]) if x[5:].isdigit() else 0,
+            reverse=True,
+        )
+        for run in runs:
+            for fname in ("best_model.pt", "weights/best.pt"):
+                candidate = os.path.join(project, run, fname)
+                if os.path.exists(candidate):
+                    print(f"   Modele trouve: {candidate}")
+                    return candidate
+
+    # Dual : ./nadir/train/, ./oblique/train/
+    for project in ("nadir", "oblique"):
+        if not os.path.isdir(project):
+            continue
+        runs = sorted(
+            [d for d in os.listdir(project) if d.startswith("train")],
+            key=lambda x: int(x[5:]) if x[5:].isdigit() else 0,
+            reverse=True,
+        )
+        for run in runs:
+            for fname in ("best_model.pt", "weights/best.pt"):
+                candidate = os.path.join(project, run, fname)
+                if os.path.exists(candidate):
+                    print(f"   Modele {project} trouve: {candidate}")
+                    return candidate
+
+    # Legacy: runs/detect/
     if os.path.exists("runs/detect"):
-        # Lister tous les dossiers train triés (train, train2, train3...)
-        train_folders = sorted([f for f in os.listdir("runs/detect") if f.startswith("train")], 
-                               key=lambda x: int(x.replace("train", "") or "0"))
-        
-        # Prendre le plus récent (dernier de la liste)
-        for folder in reversed(train_folders):
-            best_pt = f"runs/detect/{folder}/weights/best.pt"
-            if os.path.exists(best_pt):
-                print(f"📁 Modèle trouvé: {best_pt}")
-                return best_pt
-    
-    # Chercher dans output/
-    if os.path.exists("output"):
-        for name in ["best_model.pt", "best.pt"]:
-            path = f"output/{name}"
-            if os.path.exists(path):
-                return path
-    
-    # Valeur par défaut
-    return os.path.join(os.getenv("OUTPUT_DIR", "./output"), "best_model.pt")
+        folders = sorted(
+            [f for f in os.listdir("runs/detect") if f.startswith("train")],
+            key=lambda x: int(x[5:]) if x[5:].isdigit() else 0,
+            reverse=True,
+        )
+        for folder in folders:
+            for fname in ("best_model.pt", "weights/best.pt"):
+                candidate = os.path.join("runs/detect", folder, fname)
+                if os.path.exists(candidate):
+                    print(f"   Modele trouve: {candidate}")
+                    return candidate
+
+    return None
 
 
 def load_classes(yaml_path="classes.yaml"):
@@ -170,27 +198,33 @@ def generate_summary(reports, output_dir, total_time):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Inférence YOLO")
-    parser.add_argument("--model", default=None, help="Chemin du modèle (auto-détecté si non spécifié)")
-    parser.add_argument("--input", default=os.getenv("DETECTION_TEST_IMAGES_DIR", "../test"))
+    parser = argparse.ArgumentParser(description="Inference YOLO")
+    parser.add_argument("--model", default=None)
+    parser.add_argument("--input", default=None,
+                        help="Dossier ou image (defaut: auto-detection)")
     parser.add_argument("--output", default=os.getenv("PREDICTIONS_DIR", "./predictions"))
     parser.add_argument("--threshold", type=float, default=0.5)
     parser.add_argument("--no-display", action="store_true")
     args = parser.parse_args()
-    
-    # Trouver le modèle automatiquement si non spécifié
+
     if args.model is None:
         args.model = find_best_model()
-    
-    if not os.path.exists(args.model):
-        print(f"❌ Modèle non trouvé: {args.model}")
-        print("\n📁 Dossiers disponibles dans runs/detect/:")
-        if os.path.exists("runs/detect"):
-            for folder in sorted(os.listdir("runs/detect")):
-                weights_path = f"runs/detect/{folder}/weights"
-                if os.path.exists(weights_path):
-                    files = os.listdir(weights_path)
-                    print(f"   {folder}: {files}")
+    if args.model is None or not os.path.exists(str(args.model or "")):
+        print("   Modele non trouve. Lancez : python train.py --mode simple|attention|optimize|dual")
+        return
+
+    if args.input is None:
+        for candidate in (
+            os.getenv("DETECTION_TEST_IMAGES_DIR", ""),
+            os.getenv("DETECTION_INFERENCE_IMAGES_DIR", ""),
+            "./test_images", "./images", "../test",
+        ):
+            if candidate and os.path.isdir(candidate):
+                args.input = candidate
+                break
+    if args.input is None:
+        print("   Aucun dossier d'images trouve.")
+        print("   Utilisez : python inference.py --input /chemin/vers/images")
         return
     
     print(f"🧠 Modèle: {args.model}")

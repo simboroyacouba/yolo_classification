@@ -45,68 +45,226 @@ def load_classes(yaml_path="classes.yaml"):
 CLASSES_FILE = os.getenv("CLASSES_FILE", "classes.yaml")
 
 CONFIG = {
-    "model_path": os.getenv("MODEL_PATH", None),  # Sera détecté automatiquement
-    "output_dir": os.getenv("EVALUATION_DIR", "./evaluation"),
-    "dataset_dir": os.getenv("DATASET_DIR", "./output/dataset"),
-    "classes_file": CLASSES_FILE,
-    "classes": load_classes(CLASSES_FILE),
-    "score_threshold": 0.5,
-    "iou_thresholds": [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95],
+    "model_path":           os.getenv("MODEL_PATH", None),
+    "output_dir":           os.getenv("EVALUATION_DIR", "./evaluation"),
+    "dataset_dir":          os.getenv("DATASET_DIR", "./output/dataset"),
+    "classes_file":         CLASSES_FILE,
+    "nadir_classes_file":   os.getenv("NADIR_CLASSES_FILE",   "classes_nadir.yaml"),
+    "oblique_classes_file": os.getenv("OBLIQUE_CLASSES_FILE", "classes_oblique.yaml"),
+    "classes":              load_classes(CLASSES_FILE),
+    "score_threshold":      0.5,
+    "iou_thresholds":       [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95],
 }
 
 
-def find_model_and_test_set():
-    """Trouver automatiquement le modèle et le test set"""
-    
-    model_path = CONFIG["model_path"]
-    test_images_dir = None
-    test_labels_dir = None
-    
-    # Chercher le modèle
-    if model_path is None or not os.path.exists(str(model_path)):
-        # Chercher dans runs/detect/
-        for root, dirs, files in os.walk("runs/detect"):
-            if "best.pt" in files:
-                model_path = os.path.join(root, "best.pt")
-                break
-            if "best_model.pt" in files:
-                model_path = os.path.join(root, "best_model.pt")
-                break
-        
-        # Chercher aussi dans output/
-        if model_path is None:
-            for root, dirs, files in os.walk("output"):
-                if "best.pt" in files:
-                    model_path = os.path.join(root, "best.pt")
-                    break
-                if "best_model.pt" in files:
-                    model_path = os.path.join(root, "best_model.pt")
-                    break
-    
-    # Chercher le test set
-    # 1. Chercher test_info.json
-    for root, dirs, files in os.walk("."):
-        if "test_info.json" in files:
-            with open(os.path.join(root, "test_info.json"), 'r') as f:
-                info = json.load(f)
-                test_images_dir = info.get('test_images_dir')
-                test_labels_dir = info.get('test_labels_dir')
-            break
-    
-    # 2. Sinon chercher dans output/dataset/images/test
-    if test_images_dir is None:
-        possible_paths = [
-            "./output/dataset/images/test",
-            "output/dataset/images/test",
-            CONFIG["dataset_dir"] + "/images/test",
-        ]
-        for p in possible_paths:
-            if os.path.exists(p):
-                test_images_dir = p
-                test_labels_dir = p.replace("/images/", "/labels/")
-                break
-    
-    return model_path, test_images_dir, test_labels_dir
+def _find_yolo_project_model(project):
+    """Trouve best_model.pt dans le projet YOLO ./<project>/train*/."""
+    if not os.path.isdir(project):
+        return None
+    runs = sorted(
+        [d for d in os.listdir(project) if d.startswith("train")],
+        key=lambda x: int(x[5:]) if x[5:].isdigit() else 0,
+        reverse=True,
+    )
+    for run in runs:
+        for fname in ("best_model.pt", "weights/best.pt", "weights/best.pt"):
+            candidate = os.path.join(project, run, fname)
+            if os.path.exists(candidate):
+                return candidate
+    return None
+
+
+def _find_test_info(base_output, sub=None):
+    """Retourne le chemin du test_info.json pour le sous-mode donné (None = unified)."""
+    if sub:
+        candidate = os.path.join(base_output, sub, "dataset", "test_info.json")
+    else:
+        candidate = os.path.join(base_output, "dataset", "test_info.json")
+    if os.path.exists(candidate):
+        return candidate
+    # Fallback: walk to find any test_info.json
+    search_root = os.path.join(base_output, sub) if sub else base_output
+    if os.path.isdir(search_root):
+        for root, _, files in os.walk(search_root):
+            if "test_info.json" in files:
+                return os.path.join(root, "test_info.json")
+    return None
+
+
+def auto_discover():
+    """
+    Decouvre automatiquement les modeles entraines.
+    Retourne ('unified', model_path, test_info_path)
+          ou ('dual', [(mode, model_path, test_info_path), ...])
+          ou None si rien trouve.
+    """
+    env_model   = CONFIG["model_path"]
+    base_output = os.getenv("OUTPUT_DIR", "./output")
+
+    if env_model and os.path.exists(env_model):
+        ti = _find_test_info(base_output)
+        return ("unified", env_model, ti)
+
+    # Modes unifies (simple, attention, optimize, all)
+    for project in ("simple", "attention", "optimize", "all"):
+        mp = _find_yolo_project_model(project)
+        if mp:
+            ti = _find_test_info(base_output)
+            return ("unified", mp, ti)
+
+    # Fallback legacy: runs/detect/
+    if os.path.exists("runs/detect"):
+        candidates = sorted(os.listdir("runs/detect"), reverse=True)
+        for folder in candidates:
+            for fname in ("best_model.pt", "weights/best.pt"):
+                mp = os.path.join("runs/detect", folder, fname)
+                if os.path.exists(mp):
+                    ti = _find_test_info(base_output)
+                    return ("unified", mp, ti)
+
+    # Mode dual (nadir + oblique)
+    pairs = []
+    for sub_mode in ("nadir", "oblique"):
+        mp = _find_yolo_project_model(sub_mode)
+        if mp:
+            ti = _find_test_info(base_output, sub_mode)
+            pairs.append((sub_mode, mp, ti))
+
+    if pairs:
+        return ("dual", pairs)
+
+    return None
+
+
+def _load_test_set(test_info_path):
+    """Charge test_images_dir et test_labels_dir depuis test_info.json."""
+    if test_info_path is None:
+        return None, None
+    with open(test_info_path, "r") as f:
+        info = json.load(f)
+    return info.get("test_images_dir"), info.get("test_labels_dir")
+
+
+def _run_single_eval(model_path, test_images_dir, test_labels_dir, class_names, label=""):
+    """Evalue un modele YOLO sur un test set. Retourne le dict results ou None."""
+    if not os.path.exists(str(model_path)):
+        print(f"   Modele introuvable: {model_path}")
+        return None
+    if not os.path.isdir(str(test_images_dir or "")):
+        print(f"   Dossier images introuvable: {test_images_dir}")
+        return None
+    if not os.path.isdir(str(test_labels_dir or "")):
+        test_labels_dir = str(test_images_dir).replace("/images/", "/labels/")
+    if not os.path.isdir(test_labels_dir):
+        print(f"   Dossier labels introuvable: {test_labels_dir}")
+        return None
+
+    print(f"   Modele:       {model_path}")
+    print(f"   Test images:  {test_images_dir}")
+
+    gt = load_yolo_labels(test_labels_dir, test_images_dir)
+    if not gt:
+        print("   Aucune image dans le test set!")
+        return None
+
+    model = YOLO(model_path)
+    class_names_no_bg = [c for c in class_names if c != "__background__"]
+    calc = MetricsCalculator(len(class_names_no_bg), class_names, CONFIG["iou_thresholds"])
+
+    for img_file in tqdm(gt.keys(), desc=f"Eval {label}"):
+        img_path = os.path.join(test_images_dir, img_file)
+        if not os.path.exists(img_path):
+            continue
+        res = model.predict(img_path, conf=CONFIG["score_threshold"], verbose=False)[0]
+        g   = gt[img_file]
+        if len(res.boxes) > 0:
+            pb = res.boxes.xyxy.cpu().numpy()
+            pl = res.boxes.cls.cpu().numpy().astype(int)
+            ps = res.boxes.conf.cpu().numpy()
+        else:
+            pb = np.zeros((0, 4)); pl = np.zeros((0,), dtype=int); ps = np.zeros((0,))
+        calc.add_image(pb, pl, ps, g["boxes"], g["labels"])
+
+    return calc.compute(), len(gt)
+
+
+def _merge_yolo_results(entries):
+    """
+    Fusionne des resultats de modes differents.
+    entries: [(results_dict, mode_label), ...]
+    """
+    merged_per_class  = {}
+    merged_map_class  = {}
+    iou_thresholds    = CONFIG["iou_thresholds"]
+
+    for results, _ in entries:
+        merged_per_class.update(results["per_class"])
+        merged_map_class.update(results["mAP_per_class"])
+
+    all_names = list(merged_per_class.keys())
+    overall   = {}
+    for t in iou_thresholds:
+        tp = sum(merged_per_class[n][f"iou_{t}"]["TP"] for n in all_names)
+        fp = sum(merged_per_class[n][f"iou_{t}"]["FP"] for n in all_names)
+        fn = sum(merged_per_class[n][f"iou_{t}"]["FN"] for n in all_names)
+        p  = tp / (tp + fp) if tp + fp > 0 else 0
+        r  = tp / (tp + fn) if tp + fn > 0 else 0
+        overall[f"iou_{t}"] = {
+            "TP": tp, "FP": fp, "FN": fn,
+            "Precision": p, "Recall": r,
+            "F1": 2 * p * r / (p + r) if p + r > 0 else 0,
+        }
+
+    return {
+        "per_class":      merged_per_class,
+        "mAP_per_class":  merged_map_class,
+        "overall":        overall,
+        "mAP50":    float(np.mean([v["AP50"]    for v in merged_map_class.values()])),
+        "mAP50_95": float(np.mean([v["AP50_95"] for v in merged_map_class.values()])),
+        "macro_avg": {
+            "Precision": float(np.mean([merged_per_class[n]["iou_0.5"]["Precision"] for n in all_names])),
+            "Recall":    float(np.mean([merged_per_class[n]["iou_0.5"]["Recall"]    for n in all_names])),
+            "F1":        float(np.mean([merged_per_class[n]["iou_0.5"]["F1"]        for n in all_names])),
+        },
+    }
+
+
+def _print_save_yolo_results(results, output_dir, n_images, model_path, label=""):
+    os.makedirs(output_dir, exist_ok=True)
+    title = f"RESULTATS TEST SET{' — ' + label if label else ''}"
+    print("\n" + "=" * 70)
+    print(f"   {title}")
+    print("=" * 70)
+    print(f"   Images testees: {n_images}")
+    ma = results.get("macro_avg", results["overall"]["iou_0.5"])
+    print(f"   mAP@50:    {results['mAP50']:.4f} ({results['mAP50']*100:.2f}%)")
+    print(f"   mAP@50:95: {results['mAP50_95']:.4f}")
+    print(f"   Precision: {ma['Precision']:.4f}")
+    print(f"   Recall:    {ma['Recall']:.4f}")
+    print(f"   F1-Score:  {ma['F1']:.4f}")
+    print("=" * 70)
+    if results["mAP_per_class"]:
+        print("\n   Par classe (IoU=0.5):")
+        for name in results["mAP_per_class"]:
+            m = results["per_class"][name]["iou_0.5"]
+            print(f"   {name:<25} P={m['Precision']:.3f} R={m['Recall']:.3f} F1={m['F1']:.3f}")
+
+    with open(os.path.join(output_dir, "metrics_test_set.json"), "w") as f:
+        json.dump(results, f, indent=2, default=float)
+    plot_metrics(results, output_dir)
+
+    with open(os.path.join(output_dir, "evaluation_report_test_set.txt"), "w", encoding="utf-8") as f:
+        f.write(f"EVALUATION YOLO - TEST SET - {datetime.now()}\n{'='*50}\n\n")
+        f.write(f"Images testees: {n_images}\nModele: {model_path}\n\n")
+        f.write(f"mAP@50: {results['mAP50']:.4f}\nmAP@50:95: {results['mAP50_95']:.4f}\n")
+        f.write(f"Precision: {ma['Precision']:.4f}\nRecall: {ma['Recall']:.4f}\nF1-Score: {ma['F1']:.4f}\n")
+        if results["mAP_per_class"]:
+            f.write("\nPAR CLASSE (IoU=0.5)\n" + "-" * 50 + "\n")
+            for name in results["mAP_per_class"]:
+                m = results["per_class"][name]["iou_0.5"]
+                f.write(f"{name}: P={m['Precision']:.4f} R={m['Recall']:.4f} F1={m['F1']:.4f}\n")
+
+    print(f"\n   Resultats sauvegardes: {output_dir}")
 
 
 # =============================================================================
@@ -305,121 +463,74 @@ def plot_metrics(results, output_dir):
 
 def main():
     print("=" * 70)
-    print("   ÉVALUATION YOLO - TEST SET (10%)")
+    print("   EVALUATION YOLO - TEST SET (10%)")
     print("=" * 70)
-    
-    # Trouver le modèle et le test set
-    model_path, test_images_dir, test_labels_dir = find_model_and_test_set()
-    
-    if model_path is None or not os.path.exists(str(model_path)):
-        print("❌ Modèle non trouvé!")
-        print("   Spécifiez MODEL_PATH ou lancez d'abord train.py")
+
+    discovery = auto_discover()
+    if discovery is None:
+        print("   Aucun modele trouve! Lancez d'abord train.py")
         return
-    
-    if test_images_dir is None or not os.path.exists(str(test_images_dir)):
-        print("❌ Test set non trouvé!")
-        print("   Lancez d'abord train.py pour créer le split 70/20/10")
-        return
-    
-    print(f"\n📋 Configuration:")
-    print(f"   Modèle: {model_path}")
-    print(f"   Test images: {test_images_dir}")
-    print(f"   Test labels: {test_labels_dir}")
-    
-    os.makedirs(CONFIG["output_dir"], exist_ok=True)
-    
-    # Charger les ground truths du test set (format YOLO)
-    print("\n📂 Chargement du test set...")
-    gt = load_yolo_labels(test_labels_dir, test_images_dir)
-    print(f"   {len(gt)} images de test")
-    
-    if len(gt) == 0:
-        print("❌ Aucune image trouvée dans le test set!")
-        return
-    
-    # Charger le modèle
-    print(f"\n🧠 Chargement du modèle...")
-    model = YOLO(model_path)
-    
-    # Classes sans background
-    class_names_no_bg = [c for c in CONFIG["classes"] if c != '__background__']
-    calc = MetricsCalculator(len(class_names_no_bg), CONFIG["classes"], CONFIG["iou_thresholds"])
-    
-    # Évaluation sur le test set
-    print("\n📊 Évaluation sur le TEST SET...")
-    for img_file in tqdm(gt.keys(), desc="Test"):
-        img_path = os.path.join(test_images_dir, img_file)
-        if not os.path.exists(img_path):
-            continue
-        
-        res = model.predict(img_path, conf=CONFIG["score_threshold"], verbose=False)[0]
-        g = gt[img_file]
-        
-        if len(res.boxes) > 0:
-            pred_boxes = res.boxes.xyxy.cpu().numpy()
-            pred_labels = res.boxes.cls.cpu().numpy().astype(int)
-            pred_scores = res.boxes.conf.cpu().numpy()
-        else:
-            pred_boxes, pred_labels, pred_scores = np.zeros((0,4)), np.zeros((0,), dtype=int), np.zeros((0,))
-        
-        calc.add_image(pred_boxes, pred_labels, pred_scores, g['boxes'], g['labels'])
-    
-    results = calc.compute()
-    
-    # Ajouter les infos sur le test set
-    results['evaluation_info'] = {
-        'dataset': 'TEST SET (10%)',
-        'num_images': len(gt),
-        'model_path': str(model_path),
-        'timestamp': datetime.now().isoformat()
-    }
-    
-    print("\n" + "=" * 70)
-    print("   📊 RÉSULTATS SUR LE TEST SET")
-    print("=" * 70)
-    print(f"   Images testées: {len(gt)}")
-    ma = results['macro_avg']
-    print(f"   mAP@50:    {results['mAP50']:.4f} ({results['mAP50']*100:.2f}%)")
-    print(f"   mAP@50:95: {results['mAP50_95']:.4f}")
-    print(f"   Precision: {ma['Precision']:.4f}   (macro-moyenne par classe)")
-    print(f"   Recall:    {ma['Recall']:.4f}   (macro-moyenne par classe)")
-    print(f"   F1-Score:  {ma['F1']:.4f}   (macro-moyenne par classe)")
-    print("=" * 70)
-    
-    # Par classe
-    if results['mAP_per_class']:
-        print("\n   Par classe (IoU=0.5):")
-        for name in results['mAP_per_class']:
-            m = results['per_class'][name]['iou_0.5']
-            print(f"   {name:<25} P={m['Precision']:.3f} R={m['Recall']:.3f} F1={m['F1']:.3f}")
-    
-    # Sauvegarder
-    with open(os.path.join(CONFIG["output_dir"], "metrics_test_set.json"), 'w') as f:
-        json.dump(results, f, indent=2, default=float)
-    
-    plot_metrics(results, CONFIG["output_dir"])
-    
-    # Rapport
-    with open(os.path.join(CONFIG["output_dir"], "evaluation_report_test_set.txt"), 'w', encoding='utf-8') as f:
-        f.write(f"ÉVALUATION YOLO - TEST SET - {datetime.now()}\n")
-        f.write("=" * 50 + "\n\n")
-        f.write(f"Images testées: {len(gt)}\n")
-        f.write(f"Modèle: {model_path}\n\n")
-        ma = results['macro_avg']
-        f.write(f"mAP@50: {results['mAP50']:.4f} ({results['mAP50']*100:.2f}%)\n")
-        f.write(f"mAP@50:95: {results['mAP50_95']:.4f}\n")
-        f.write(f"Precision: {ma['Precision']:.4f}\n")
-        f.write(f"Recall: {ma['Recall']:.4f}\n")
-        f.write(f"F1-Score: {ma['F1']:.4f}\n")
-        
-        if results['mAP_per_class']:
-            f.write("\n\nPAR CLASSE (IoU=0.5)\n")
-            f.write("-" * 50 + "\n")
-            for name in results['mAP_per_class']:
-                m = results['per_class'][name]['iou_0.5']
-                f.write(f"{name}: P={m['Precision']:.4f} R={m['Recall']:.4f} F1={m['F1']:.4f}\n")
-    
-    print(f"\n📁 Résultats sauvegardés: {CONFIG['output_dir']}")
+
+    if discovery[0] == "unified":
+        _, model_path, test_info_path = discovery
+        test_images_dir, test_labels_dir = _load_test_set(test_info_path)
+
+        # Fallback standard si test_info absent
+        if test_images_dir is None:
+            for p in (CONFIG["dataset_dir"] + "/images/test",
+                      "./output/dataset/images/test"):
+                if os.path.isdir(p):
+                    test_images_dir = p
+                    test_labels_dir = p.replace("/images/", "/labels/")
+                    break
+
+        ret = _run_single_eval(model_path, test_images_dir, test_labels_dir,
+                               CONFIG["classes"], label="all")
+        if ret is None:
+            return
+        results, n_images = ret
+        results["evaluation_info"] = {
+            "dataset": "TEST SET (10%)", "num_images": n_images,
+            "model_path": str(model_path), "timestamp": datetime.now().isoformat(),
+        }
+        _print_save_yolo_results(results, CONFIG["output_dir"], n_images, model_path)
+
+    else:  # dual
+        _, pairs = discovery
+        entries = []
+
+        for sub_mode, model_path, test_info_path in pairs:
+            print(f"\n{'─'*50}")
+            print(f"   [{sub_mode.upper()}]")
+            print(f"{'─'*50}")
+            test_images_dir, test_labels_dir = _load_test_set(test_info_path)
+            # Determine classes for this sub_mode
+            sub_classes_file = (CONFIG.get("nadir_classes_file", CLASSES_FILE)
+                                if sub_mode == "nadir"
+                                else CONFIG.get("oblique_classes_file", CLASSES_FILE))
+            sub_classes = load_classes(sub_classes_file)
+
+            ret = _run_single_eval(model_path, test_images_dir, test_labels_dir,
+                                   sub_classes, label=sub_mode)
+            if ret is None:
+                print(f"   Mode {sub_mode} ignore.")
+                continue
+            results, n_images = ret
+            sub_out = os.path.join(CONFIG["output_dir"], sub_mode)
+            _print_save_yolo_results(results, sub_out, n_images, model_path, label=sub_mode.upper())
+            entries.append((results, sub_mode, n_images))
+
+        if len(entries) > 1:
+            merged = _merge_yolo_results([(r, m) for r, m, _ in entries])
+            total  = sum(n for _, _, n in entries)
+            paths  = " + ".join(m for _, m, _ in entries)
+            merged["evaluation_info"] = {
+                "dataset": "TEST SET (10%) — GLOBAL",
+                "num_images": total, "model_path": paths,
+                "timestamp": datetime.now().isoformat(),
+            }
+            _print_save_yolo_results(merged, os.path.join(CONFIG["output_dir"], "global"),
+                                     total, paths, label="GLOBAL (NADIR + OBLIQUE)")
 
 
 if __name__ == "__main__":
